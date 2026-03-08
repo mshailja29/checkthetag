@@ -83,11 +83,11 @@ export async function askRealtimeWithImageAndVoiceApi(parts, dbRows = [], { lati
   return json.answer;
 }
 
-export async function askRealtimeWithImageAndVoiceStreamApi(parts, onChunk, dbRows = []) {
+export async function askRealtimeWithImageAndVoiceStreamApi(parts, onChunk, dbRows = [], { latitude, longitude } = {}) {
   const res = await fetch(`${API_BASE_URL}/api/gemini/realtime-ask-stream`, {
     method: "POST",
     headers: buildHeaders(),
-    body: JSON.stringify({ parts, dbRows }),
+    body: JSON.stringify({ parts, dbRows, latitude, longitude }),
   });
 
   if (!res.ok) {

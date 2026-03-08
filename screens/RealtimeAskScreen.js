@@ -2,9 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  FlatList,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -12,30 +15,87 @@ import { CameraView } from "expo-camera";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system";
 import * as Speech from "expo-speech";
+import * as Location from "expo-location";
 
 import AppHeader from "../components/AppHeader";
 import { askRealtimeWithImageAndVoiceStream } from "../gemini";
 import { theme } from "../theme";
 
-function resolveVideoMimeType(uri) {
-  const ext = (uri || "").split(".").pop()?.toLowerCase().split("?")[0];
-  if (ext === "mov") return "video/quicktime";
-  if (ext === "webm") return "video/webm";
-  if (ext === "3gp") return "video/3gpp";
-  return "video/mp4";
-}
+// Silence detection config
+const SILENCE_THRESHOLD_DB = -35; // dBFS — below this = silence
+const SILENCE_DURATION_MS = 1800; // 1.8s of silence = done talking
+const MIN_RECORDING_MS = 800;     // minimum recording length
 
 export default function RealtimeAskScreen({ navigation }) {
   const cameraRef = useRef(null);
-  const recordingPromiseRef = useRef(null);
+  const audioRecordingRef = useRef(null);
   const speechQueueRef = useRef([]);
   const isSpeakingRef = useRef(false);
   const pendingSpeechBufferRef = useRef("");
   const queuedSpeechCountRef = useRef(0);
+  const flatListRef = useRef(null);
+  const conversationHistoryRef = useRef([]);
+  const silenceTimerRef = useRef(null);
+  const recordingStartTimeRef = useRef(0);
+  const conversationModeRef = useRef(false);
+  const busyRef = useRef(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
   const [cameraReady, setCameraReady] = useState(false);
-  const [recording, setRecording] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [textInput, setTextInput] = useState("");
+  const [sessionActive, setSessionActive] = useState(true);
+  const [conversationMode, setConversationMode] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState(""); // "Listening...", "Thinking...", "Speaking..."
+  const locationRef = useRef(null);
+
+  // Keep busyRef in sync
+  useEffect(() => { busyRef.current = busy; }, [busy]);
+
+  // Fetch location on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === "granted") {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          locationRef.current = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+        }
+      } catch (_) {}
+    })();
+  }, []);
+
+  // Pulse animation for conversation mode
+  useEffect(() => {
+    if (conversationMode) {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.15, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        ])
+      );
+      loop.start();
+      return () => loop.stop();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [conversationMode]);
+
+  // ─── Audio mode helpers ───
+
+  const ensureRecordingAudioMode = useCallback(async () => {
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+    } catch (_) {}
+  }, []);
 
   const ensurePlaybackAudioMode = useCallback(async () => {
     try {
@@ -46,283 +106,752 @@ export default function RealtimeAskScreen({ navigation }) {
         shouldDuckAndroid: true,
         playThroughEarpieceAndroid: false,
       });
-    } catch (_) {
-      // Do not block speech if audio mode reset fails.
+    } catch (_) {}
+  }, []);
+
+  // ─── Speech queue (TTS) with auto-restart listening ───
+
+  const autoRestartListening = useCallback(() => {
+    // Called when TTS finishes and we're in conversation mode
+    if (conversationModeRef.current && !busyRef.current) {
+      setTimeout(() => {
+        if (conversationModeRef.current && !busyRef.current) {
+          startListeningInternal();
+        }
+      }, 400);
     }
   }, []);
 
   const speakNext = useCallback(async () => {
     if (isSpeakingRef.current) return;
     const next = speechQueueRef.current.shift();
-    if (!next) return;
+    if (!next) {
+      // All speech done — auto-restart listening in conversation mode
+      setVoiceStatus(conversationModeRef.current ? "Listening..." : "");
+      autoRestartListening();
+      return;
+    }
 
     isSpeakingRef.current = true;
+    setVoiceStatus("Speaking...");
     await ensurePlaybackAudioMode();
     Speech.speak(next, {
       language: "en-US",
       pitch: 1,
-      rate: 1.08,
-      onDone: () => {
-        isSpeakingRef.current = false;
-        void speakNext();
-      },
-      onStopped: () => {
-        isSpeakingRef.current = false;
-        void speakNext();
-      },
-      onError: () => {
-        isSpeakingRef.current = false;
-        void speakNext();
-      },
+      rate: 1.1,
+      onDone: () => { isSpeakingRef.current = false; void speakNext(); },
+      onStopped: () => { isSpeakingRef.current = false; void speakNext(); },
+      onError: () => { isSpeakingRef.current = false; void speakNext(); },
     });
-  }, [ensurePlaybackAudioMode]);
+  }, [ensurePlaybackAudioMode, autoRestartListening]);
 
-  const queueSpeech = useCallback(
-    (text) => {
-      const trimmed = text.trim();
-      if (!trimmed) return;
-      queuedSpeechCountRef.current += 1;
-      speechQueueRef.current.push(trimmed);
-      void speakNext();
-    },
-    [speakNext]
-  );
+  const queueSpeech = useCallback((text) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    queuedSpeechCountRef.current += 1;
+    speechQueueRef.current.push(trimmed);
+    void speakNext();
+  }, [speakNext]);
 
-  const flushSpeakableText = useCallback(
-    (force = false) => {
-      let buffer = pendingSpeechBufferRef.current;
-      let match = buffer.match(/^([\s\S]*?[.!?])(\s|$)/);
+  const flushSpeakableText = useCallback((force = false) => {
+    let buffer = pendingSpeechBufferRef.current;
+    let match = buffer.match(/^([\s\S]*?[.!?])(\s|$)/);
+    while (match) {
+      queueSpeech(match[1]);
+      buffer = buffer.slice(match[0].length);
+      match = buffer.match(/^([\s\S]*?[.!?])(\s|$)/);
+    }
+    if (force && buffer.trim()) {
+      queueSpeech(buffer);
+      buffer = "";
+    }
+    pendingSpeechBufferRef.current = buffer;
+  }, [queueSpeech]);
 
-      while (match) {
-        queueSpeech(match[1]);
-        buffer = buffer.slice(match[0].length);
-        match = buffer.match(/^([\s\S]*?[.!?])(\s|$)/);
-      }
+  const stopAllSpeech = useCallback(() => {
+    Speech.stop();
+    speechQueueRef.current = [];
+    isSpeakingRef.current = false;
+    pendingSpeechBufferRef.current = "";
+    queuedSpeechCountRef.current = 0;
+  }, []);
 
-      if (force && buffer.trim()) {
-        queueSpeech(buffer);
-        buffer = "";
-      }
+  // ─── Cleanup ───
 
-      pendingSpeechBufferRef.current = buffer;
-    },
-    [queueSpeech]
-  );
+  const cleanupRecording = useCallback(async () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (audioRecordingRef.current) {
+      try {
+        const status = await audioRecordingRef.current.getStatusAsync();
+        if (status.isRecording || status.canRecord) {
+          await audioRecordingRef.current.stopAndUnloadAsync();
+        }
+      } catch (_) {}
+      audioRecordingRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
-      Speech.stop();
+      conversationModeRef.current = false;
+      stopAllSpeech();
+      cleanupRecording();
     };
   }, []);
 
-  const startRecording = useCallback(async () => {
+  // ─── Add message to conversation ───
+
+  const addMessage = useCallback((role, text) => {
+    const msg = { id: Date.now().toString() + Math.random(), role, text, time: new Date() };
+    setMessages(prev => [...prev, msg]);
+    conversationHistoryRef.current.push({ role, text });
+    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+    return msg;
+  }, []);
+
+  const updateLastAiMessage = useCallback((text) => {
+    setMessages(prev => {
+      const copy = [...prev];
+      for (let i = copy.length - 1; i >= 0; i--) {
+        if (copy[i].role === "ai") {
+          copy[i] = { ...copy[i], text };
+          break;
+        }
+      }
+      return copy;
+    });
+    const hist = conversationHistoryRef.current;
+    for (let i = hist.length - 1; i >= 0; i--) {
+      if (hist[i].role === "ai") { hist[i].text = text; break; }
+    }
+  }, []);
+
+  // ─── Capture snapshot from camera ───
+
+  const captureSnapshot = useCallback(async () => {
+    if (!cameraRef.current || !cameraReady) return null;
     try {
+      return await cameraRef.current.takePictureAsync({
+        quality: 0.6, base64: true, skipProcessing: true,
+      });
+    } catch (e) {
+      console.warn("Snapshot failed:", e?.message);
+      return null;
+    }
+  }, [cameraReady]);
+
+  // ─── Process voice + image and send to AI ───
+
+  const processVoiceInput = useCallback(async (audioUri) => {
+    setBusy(true);
+    setVoiceStatus("Thinking...");
+    stopAllSpeech();
+
+    try {
+      const snapshot = await captureSnapshot();
+
+      let audioBase64 = null;
+      if (audioUri) {
+        audioBase64 = await FileSystem.readAsStringAsync(audioUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
+
+      const parts = [];
+      if (snapshot?.base64) {
+        parts.push({ type: "image", base64: snapshot.base64, mimeType: "image/jpeg" });
+      }
+      if (audioBase64) {
+        parts.push({ type: "audio", base64: audioBase64, mimeType: "audio/m4a" });
+      }
+      parts.push({
+        type: "text",
+        value: "The user asked a question via voice (audio attached). Also see the camera image of what they're looking at. Answer their question.",
+      });
+
+      addMessage("user", "Voice question");
+      addMessage("ai", "Thinking...");
+
+      // Add conversation context
+      const history = conversationHistoryRef.current;
+      if (history.length > 2) {
+        const prevExchanges = history.slice(0, -2).slice(-6);
+        const contextText = "Previous conversation:\n" +
+          prevExchanges.map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`).join("\n") +
+          "\n\nNow the user asks a new voice question (audio attached):";
+        parts.push({ type: "text", value: contextText });
+      }
+
+      let fullAnswer = "";
+      const loc = locationRef.current || {};
+      const answerText = await askRealtimeWithImageAndVoiceStream(parts, (chunk, fullText) => {
+        pendingSpeechBufferRef.current += chunk;
+        flushSpeakableText(false);
+        fullAnswer = fullText.trim();
+        updateLastAiMessage(fullAnswer);
+      }, [], { latitude: loc.latitude, longitude: loc.longitude });
+
+      fullAnswer = answerText?.trim() || fullAnswer;
+      updateLastAiMessage(fullAnswer);
+
+      await ensurePlaybackAudioMode();
+      setVoiceStatus("Speaking...");
+      flushSpeakableText(true);
+      if (queuedSpeechCountRef.current === 0 && fullAnswer) {
+        queueSpeech(fullAnswer);
+      }
+    } catch (e) {
+      updateLastAiMessage("Sorry, something went wrong. Try again.");
+      setVoiceStatus("");
+      autoRestartListening();
+    } finally {
+      setBusy(false);
+    }
+  }, [captureSnapshot, addMessage, updateLastAiMessage, stopAllSpeech, flushSpeakableText, queueSpeech, ensurePlaybackAudioMode, autoRestartListening]);
+
+  // ─── Start listening (internal — used by conversation mode) ───
+
+  const startListeningInternal = useCallback(async () => {
+    if (busyRef.current || audioRecordingRef.current) return;
+
+    try {
+      await cleanupRecording();
+      await ensureRecordingAudioMode();
+
+      const recording = new Audio.Recording();
+      await recording.prepareToRecordAsync({
+        ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        isMeteringEnabled: true,
+      });
+
+      // Silence detection via metering
+      let silenceStart = null;
+      recording.setOnRecordingStatusUpdate((status) => {
+        if (!status.isRecording) return;
+        const db = status.metering ?? -160;
+        const elapsed = Date.now() - recordingStartTimeRef.current;
+
+        if (db < SILENCE_THRESHOLD_DB) {
+          if (!silenceStart) silenceStart = Date.now();
+          const silenceDuration = Date.now() - silenceStart;
+          if (silenceDuration >= SILENCE_DURATION_MS && elapsed >= MIN_RECORDING_MS) {
+            // Silence detected — auto-stop
+            console.log("[Voice] Silence detected, auto-stopping");
+            silenceStart = null;
+            void handleAutoStop(recording);
+          }
+        } else {
+          silenceStart = null;
+        }
+      });
+      recording.setProgressUpdateInterval(200);
+
+      await recording.startAsync();
+      recordingStartTimeRef.current = Date.now();
+      audioRecordingRef.current = recording;
+      setIsListening(true);
+      setVoiceStatus("Listening...");
+    } catch (e) {
+      audioRecordingRef.current = null;
+      setIsListening(false);
+      console.warn("[Voice] Start failed:", e?.message);
+    }
+  }, [cleanupRecording, ensureRecordingAudioMode]);
+
+  // Auto-stop handler (called by silence detection)
+  const handleAutoStop = useCallback(async (recording) => {
+    if (!recording) return;
+    audioRecordingRef.current = null;
+    setIsListening(false);
+
+    try {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      if (uri) {
+        void processVoiceInput(uri);
+      }
+    } catch (e) {
+      console.warn("[Voice] Auto-stop failed:", e?.message);
+      setVoiceStatus("");
+    }
+  }, [processVoiceInput]);
+
+  // ─── Manual stop (user taps button while listening) ───
+
+  const manualStopAndAsk = useCallback(async () => {
+    if (!audioRecordingRef.current) {
+      setIsListening(false);
+      return;
+    }
+    const recording = audioRecordingRef.current;
+    audioRecordingRef.current = null;
+    setIsListening(false);
+
+    try {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      if (uri) {
+        void processVoiceInput(uri);
+      }
+    } catch (e) {
+      console.warn("[Voice] Manual stop failed:", e?.message);
+      setVoiceStatus("");
+    }
+  }, [processVoiceInput]);
+
+  // ─── Toggle conversation mode ───
+
+  const toggleConversationMode = useCallback(async () => {
+    if (conversationMode) {
+      // Exit conversation mode
+      conversationModeRef.current = false;
+      setConversationMode(false);
+      setVoiceStatus("");
+      stopAllSpeech();
+      await cleanupRecording();
+      setIsListening(false);
+    } else {
+      // Enter conversation mode
       const { status: perm } = await Audio.requestPermissionsAsync();
       if (perm !== "granted") {
         Alert.alert("Microphone access", "Allow microphone to ask questions by voice.");
         return;
       }
-      if (!cameraRef.current || !cameraReady) return;
-
-      setRecording(true);
-      setStatus("Recording video… ask your question aloud, then tap Stop.");
-      recordingPromiseRef.current = cameraRef.current.recordAsync({
-        maxDuration: 20,
-      });
-    } catch (e) {
-      Alert.alert("Recording failed", e?.message ?? "Could not start recording.");
-      setRecording(false);
-      recordingPromiseRef.current = null;
+      conversationModeRef.current = true;
+      setConversationMode(true);
+      stopAllSpeech();
+      startListeningInternal();
     }
-  }, [cameraReady]);
+  }, [conversationMode, stopAllSpeech, cleanupRecording, startListeningInternal]);
 
-  const stopAndAsk = useCallback(async () => {
-    if (!recording) return;
+  // ─── Send text question (with snapshot) ───
+
+  const sendToAI = useCallback(async (questionText, imageBase64) => {
     setBusy(true);
-    setStatus("Processing…");
+    setVoiceStatus("Thinking...");
+    stopAllSpeech();
+
+    addMessage("user", questionText || "What is this?");
+    addMessage("ai", "Thinking...");
+
     try {
-      cameraRef.current?.stopRecording();
-      const video = await recordingPromiseRef.current;
-      recordingPromiseRef.current = null;
-      setRecording(false);
-
-      const videoUri = video?.uri;
-      let videoBase64 = null;
-      let mimeType = "video/mp4";
-      if (videoUri) {
-        videoBase64 = await FileSystem.readAsStringAsync(videoUri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        mimeType = resolveVideoMimeType(videoUri);
+      const parts = [];
+      if (imageBase64) {
+        parts.push({ type: "image", base64: imageBase64, mimeType: "image/jpeg" });
       }
 
-      if (!videoBase64) {
-        setStatus("Record a short video and ask your question, then try again.");
-        setBusy(false);
-        return;
+      const history = conversationHistoryRef.current;
+      let contextPrompt = "";
+      if (history.length > 2) {
+        const prevExchanges = history.slice(0, -2).slice(-6);
+        contextPrompt = "Previous conversation:\n" +
+          prevExchanges.map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`).join("\n") +
+          "\n\nNew question: ";
       }
 
-      const parts = [{ type: "video", base64: videoBase64, mimeType }];
+      const userQuestion = contextPrompt + (questionText || "What can you tell me about this item?");
+      parts.push({ type: "text", value: userQuestion });
 
-      Speech.stop();
-      speechQueueRef.current = [];
-      isSpeakingRef.current = false;
-      pendingSpeechBufferRef.current = "";
-      queuedSpeechCountRef.current = 0;
-      setStatus("Answering…");
-
+      let fullAnswer = "";
+      const loc = locationRef.current || {};
       const answerText = await askRealtimeWithImageAndVoiceStream(parts, (chunk, fullText) => {
         pendingSpeechBufferRef.current += chunk;
         flushSpeakableText(false);
-        setStatus(fullText.trim());
-      });
+        fullAnswer = fullText.trim();
+        updateLastAiMessage(fullAnswer);
+      }, [], { latitude: loc.latitude, longitude: loc.longitude });
+
+      fullAnswer = answerText?.trim() || fullAnswer;
+      updateLastAiMessage(fullAnswer);
 
       await ensurePlaybackAudioMode();
+      setVoiceStatus(conversationModeRef.current ? "Speaking..." : "");
       flushSpeakableText(true);
-      if (queuedSpeechCountRef.current === 0 && answerText.trim()) {
-        queueSpeech(answerText);
+      if (queuedSpeechCountRef.current === 0 && fullAnswer) {
+        queueSpeech(fullAnswer);
       }
-      setStatus(answerText);
     } catch (e) {
-      Alert.alert("Error", e?.message ?? "Something went wrong.");
-      setStatus("");
-      setRecording(false);
-      recordingPromiseRef.current = null;
+      updateLastAiMessage("Sorry, something went wrong. Try again.");
+      setVoiceStatus("");
     } finally {
       setBusy(false);
     }
-  }, [recording]);
+  }, [addMessage, updateLastAiMessage, stopAllSpeech, flushSpeakableText, queueSpeech, ensurePlaybackAudioMode]);
 
-  const cancelRecording = useCallback(async () => {
-    if (recording) {
-      try {
-        cameraRef.current?.stopRecording();
-        await recordingPromiseRef.current;
-      } catch (_) {}
-      Speech.stop();
-      speechQueueRef.current = [];
-      isSpeakingRef.current = false;
-      pendingSpeechBufferRef.current = "";
-      queuedSpeechCountRef.current = 0;
-      recordingPromiseRef.current = null;
-      setRecording(false);
-      setStatus("");
-    }
-  }, [recording]);
+  const sendTextQuestion = useCallback(async () => {
+    const q = textInput.trim();
+    if (!q) return;
+    setTextInput("");
+    const snapshot = await captureSnapshot();
+    await sendToAI(q, snapshot?.base64 || null);
+  }, [textInput, captureSnapshot, sendToAI]);
+
+  const quickAsk = useCallback(async () => {
+    if (busy) return;
+    const snapshot = await captureSnapshot();
+    await sendToAI("What is this item? Tell me about it and if you know the price.", snapshot?.base64 || null);
+  }, [busy, captureSnapshot, sendToAI]);
+
+  // ─── End session ───
+
+  const endSession = useCallback(() => {
+    conversationModeRef.current = false;
+    setConversationMode(false);
+    stopAllSpeech();
+    cleanupRecording();
+    setSessionActive(false);
+    navigation.goBack();
+  }, [stopAllSpeech, cleanupRecording, navigation]);
+
+  // ─── Render message bubble ───
+
+  const renderMessage = useCallback(({ item }) => {
+    const isUser = item.role === "user";
+    return (
+      <View style={[styles.bubble, isUser ? styles.userBubble : styles.aiBubble]}>
+        <Text style={[styles.bubbleLabel, isUser && styles.userLabel]}>
+          {isUser ? "You" : "AI"}
+        </Text>
+        <Text style={[styles.bubbleText, isUser && styles.userBubbleText]}>
+          {item.text}
+        </Text>
+      </View>
+    );
+  }, []);
+
+  if (!sessionActive) return null;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      {/* Header */}
       <View style={styles.header}>
         <AppHeader
-          title="Ask about any item"
-          subtitle="Record a short video of the product and ask aloud to get spoken answers and cheaper nearby options."
-          onBack={() => navigation.goBack()}
+          title="Live Assistant"
+          subtitle={conversationMode
+            ? "Conversation mode active — just speak naturally!"
+            : "Tap the mic to start a conversation, or type below."}
+          onBack={endSession}
         />
       </View>
 
-      <View style={styles.cameraWrap}>
+      {/* Camera preview — always live */}
+      <Pressable style={styles.cameraWrap} onPress={!busy ? quickAsk : undefined}>
         <CameraView
           ref={cameraRef}
           style={StyleSheet.absoluteFill}
           facing="back"
-          mode="video"
+          mode="picture"
           animateShutter={false}
           onCameraReady={() => setCameraReady(true)}
         />
-      </View>
-
-      {status ? (
-        <View style={styles.statusCard}>
-          <Text style={styles.status}>{status}</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.controls}>
-        {!recording ? (
-          <Pressable
-            style={[styles.mainBtn, (busy || !cameraReady) && styles.mainBtnDisabled]}
-            onPress={startRecording}
-            disabled={busy || !cameraReady}
-          >
-            <Text style={styles.mainBtnText}>Start video & ask</Text>
-          </Pressable>
-        ) : (
-          <>
-            <Pressable
-              style={[styles.mainBtn, styles.stopBtn]}
-              onPress={stopAndAsk}
-              disabled={busy}
-            >
-              {busy ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.mainBtnText}>Stop & get answer</Text>
-              )}
-            </Pressable>
-            <Pressable style={styles.cancelBtn} onPress={cancelRecording}>
-              <Text style={styles.cancelBtnText}>Cancel</Text>
-            </Pressable>
-          </>
+        {!cameraReady && (
+          <View style={styles.cameraOverlay}>
+            <ActivityIndicator color={theme.colors.accent} size="large" />
+          </View>
         )}
+        {/* Live indicator */}
+        <View style={styles.liveIndicator}>
+          <View style={styles.liveDot} />
+          <Text style={styles.liveText}>LIVE</Text>
+        </View>
+        {/* Voice status badge */}
+        {voiceStatus ? (
+          <View style={[
+            styles.statusBadge,
+            voiceStatus === "Listening..." && styles.statusListening,
+            voiceStatus === "Thinking..." && styles.statusThinking,
+            voiceStatus === "Speaking..." && styles.statusSpeaking,
+          ]}>
+            <Text style={styles.statusText}>{voiceStatus}</Text>
+          </View>
+        ) : null}
+        {/* Tap hint */}
+        {messages.length === 0 && cameraReady && !conversationMode && (
+          <View style={styles.tapHint}>
+            <Text style={styles.tapHintText}>Tap to ask about this item</Text>
+          </View>
+        )}
+      </Pressable>
+
+      {/* Conversation messages */}
+      <View style={styles.chatArea}>
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.chatContent}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        />
       </View>
+
+      {/* Input controls */}
+      <View style={styles.inputBar}>
+        {/* Big conversation mode mic button */}
+        <Animated.View style={{ transform: [{ scale: conversationMode ? pulseAnim : 1 }] }}>
+          <Pressable
+            style={[
+              styles.micBtn,
+              conversationMode && styles.micBtnConversation,
+              isListening && styles.micBtnListening,
+              busy && !conversationMode && styles.btnDisabled,
+            ]}
+            onPress={conversationMode
+              ? (isListening ? manualStopAndAsk : toggleConversationMode)
+              : toggleConversationMode}
+            disabled={busy && !conversationMode}
+          >
+            <Text style={[
+              styles.micIcon,
+              conversationMode && { color: "#fff" },
+            ]}>
+              {conversationMode
+                ? (isListening ? "..." : (busy ? "AI" : "ON"))
+                : "MIC"}
+            </Text>
+          </Pressable>
+        </Animated.View>
+
+        {/* Text input */}
+        <TextInput
+          style={styles.textInput}
+          placeholder="Type a question..."
+          placeholderTextColor={theme.colors.textMuted}
+          value={textInput}
+          onChangeText={setTextInput}
+          onSubmitEditing={sendTextQuestion}
+          editable={!busy}
+          returnKeyType="send"
+        />
+
+        {/* Send button */}
+        <Pressable
+          style={[styles.sendBtn, (!textInput.trim() || busy) && styles.btnDisabled]}
+          onPress={sendTextQuestion}
+          disabled={!textInput.trim() || busy}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <Text style={styles.sendIcon}>GO</Text>
+          )}
+        </Pressable>
+      </View>
+
+      {/* End session button */}
+      <Pressable style={styles.endBtn} onPress={endSession}>
+        <Text style={styles.endBtnText}>
+          {conversationMode ? "Stop Conversation" : "End Session"}
+        </Text>
+      </Pressable>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.background },
-  header: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 10 },
+  header: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 },
   cameraWrap: {
-    flex: 1,
-    minHeight: 280,
-    marginHorizontal: 20,
-    borderRadius: 28,
+    height: 200,
+    marginHorizontal: 16,
+    borderRadius: 20,
     overflow: "hidden",
     backgroundColor: theme.colors.surface,
-    borderWidth: 3,
+    borderWidth: 2,
     borderColor: "rgba(255,248,240,0.7)",
     ...theme.shadow,
   },
-  statusCard: {
-    marginTop: 14,
-    marginHorizontal: 20,
+  cameraOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.3)",
+  },
+  liveIndicator: {
+    position: "absolute",
+    top: 10,
+    left: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.5)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#FF3B30",
+    marginRight: 5,
+  },
+  liveText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  statusBadge: {
+    position: "absolute",
+    top: 10,
+    right: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  statusListening: {
+    backgroundColor: "rgba(255,59,48,0.85)",
+  },
+  statusThinking: {
+    backgroundColor: "rgba(255,149,0,0.85)",
+  },
+  statusSpeaking: {
+    backgroundColor: "rgba(52,199,89,0.85)",
+  },
+  statusText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  tapHint: {
+    position: "absolute",
+    bottom: 12,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+  },
+  tapHintText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+    backgroundColor: "rgba(0,0,0,0.45)",
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  chatArea: {
+    flex: 1,
+    marginTop: 8,
+    marginHorizontal: 16,
     backgroundColor: theme.colors.surface,
-    borderRadius: 20,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
     ...theme.softShadow,
   },
-  status: {
-    color: theme.colors.text,
+  chatContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  bubble: {
+    maxWidth: "85%",
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 14,
+  },
+  userBubble: {
+    alignSelf: "flex-end",
+    backgroundColor: theme.colors.accent,
+  },
+  aiBubble: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.surfaceMuted,
+  },
+  bubbleLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: theme.colors.textSoft,
+    marginBottom: 2,
+    textTransform: "uppercase",
+  },
+  userLabel: {
+    color: "rgba(255,255,255,0.7)",
+  },
+  bubbleText: {
     fontSize: 14,
-    textAlign: "center",
+    color: theme.colors.text,
     lineHeight: 20,
   },
-  controls: {
-    padding: 20,
-    paddingBottom: 32,
-    gap: 12,
+  userBubbleText: {
+    color: "#fff",
   },
-  mainBtn: {
-    backgroundColor: theme.colors.accent,
-    borderRadius: 18,
-    paddingVertical: 16,
+  inputBar: {
+    flexDirection: "row",
     alignItems: "center",
-    ...theme.softShadow,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    gap: 8,
   },
-  mainBtnDisabled: { opacity: 0.6 },
-  mainBtnText: { color: theme.colors.white, fontSize: 17, fontWeight: "800" },
-  stopBtn: { backgroundColor: theme.colors.danger },
-  cancelBtn: {
+  micBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: theme.colors.surface,
+    borderWidth: 2,
+    borderColor: theme.colors.accent,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  micBtnConversation: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accentDark,
+  },
+  micBtnListening: {
+    backgroundColor: theme.colors.danger,
+    borderColor: theme.colors.danger,
+  },
+  micIcon: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: theme.colors.accent,
+  },
+  textInput: {
+    flex: 1,
+    height: 48,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    borderRadius: 18,
-    paddingVertical: 14,
-    alignItems: "center",
-    ...theme.softShadow,
+    paddingHorizontal: 16,
+    fontSize: 15,
+    color: theme.colors.text,
   },
-  cancelBtnText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
+  sendBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: theme.colors.accent,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  sendIcon: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#fff",
+  },
+  btnDisabled: { opacity: 0.5 },
+  endBtn: {
+    marginHorizontal: 16,
+    marginTop: 6,
+    marginBottom: 12,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.danger,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  endBtnText: {
+    color: theme.colors.danger,
+    fontSize: 15,
+    fontWeight: "700",
+  },
 });
