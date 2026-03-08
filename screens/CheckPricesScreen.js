@@ -13,8 +13,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import AppHeader from "../components/AppHeader";
 import { queryPricesWithAi } from "../gemini";
 import { searchPrices } from "../database";
+import { theme } from "../theme";
 
 const FOLLOW_UPS = {
   cheaper: "From the data below, list items that have a cheaper price at another store. For each item show: item name, current price, cheaper price, and store name. Format clearly.",
@@ -89,10 +91,11 @@ export default function CheckPricesScreen({ navigation }) {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.header}>
-          <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backText}>← Back</Text>
-          </Pressable>
-          <Text style={styles.title}>Check latest prices</Text>
+          <AppHeader
+            title="Check latest prices"
+            subtitle="Search saved items, stores, and brands without changing any of the app's existing logic."
+            onBack={() => navigation.goBack()}
+          />
         </View>
 
         <View style={styles.searchRow}>
@@ -100,7 +103,7 @@ export default function CheckPricesScreen({ navigation }) {
             value={query}
             onChangeText={setQuery}
             placeholder="Search product, store, or brand..."
-            placeholderTextColor="#8A8A8A"
+            placeholderTextColor={theme.colors.textMuted}
             style={styles.input}
             editable={!busy}
             onSubmitEditing={runSearch}
@@ -112,7 +115,7 @@ export default function CheckPricesScreen({ navigation }) {
             disabled={busy}
           >
             {busy ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={theme.colors.white} />
             ) : (
               <Text style={styles.searchBtnText}>Search</Text>
             )}
@@ -161,12 +164,9 @@ export default function CheckPricesScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0B0B0C" },
+  safe: { flex: 1, backgroundColor: theme.colors.background },
   container: { flex: 1 },
-  header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  backBtn: { marginBottom: 8 },
-  backText: { color: "#2B6CFF", fontSize: 16 },
-  title: { color: "#FFF", fontSize: 24, fontWeight: "700" },
+  header: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 4 },
   searchRow: {
     flexDirection: "row",
     paddingHorizontal: 20,
@@ -175,46 +175,50 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    backgroundColor: "#141416",
-    borderColor: "rgba(255,255,255,0.1)",
+    backgroundColor: theme.colors.surfaceStrong,
+    borderColor: theme.colors.border,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: "#FFF",
+    color: theme.colors.text,
     fontSize: 16,
+    ...theme.softShadow,
   },
   searchBtn: {
-    backgroundColor: "#2B6CFF",
-    borderRadius: 12,
+    backgroundColor: theme.colors.accent,
+    borderRadius: 18,
     paddingHorizontal: 20,
     justifyContent: "center",
     minWidth: 80,
+    ...theme.softShadow,
   },
   searchBtnDisabled: { opacity: 0.6 },
-  searchBtnText: { color: "#FFF", fontWeight: "700" },
+  searchBtnText: { color: theme.colors.white, fontWeight: "800" },
   scroll: { flex: 1 },
   scrollContent: { padding: 20, paddingBottom: 40 },
   resultBox: {
-    backgroundColor: "#141416",
-    borderColor: "rgba(255,255,255,0.08)",
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
     borderWidth: 1,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: theme.radius.xl,
+    padding: 18,
     marginBottom: 24,
+    ...theme.shadow,
   },
-  resultLabel: { color: "rgba(255,255,255,0.7)", fontSize: 12, marginBottom: 8 },
-  resultText: { color: "#FFF", fontSize: 15, lineHeight: 22 },
+  resultLabel: { color: theme.colors.accentDark, fontSize: 12, fontWeight: "800", marginBottom: 8 },
+  resultText: { color: theme.colors.text, fontSize: 15, lineHeight: 22 },
   followUpSection: { gap: 10 },
-  followUpTitle: { color: "rgba(255,255,255,0.9)", fontSize: 16, fontWeight: "600", marginBottom: 4 },
+  followUpTitle: { color: theme.colors.white, fontSize: 16, fontWeight: "700", marginBottom: 4 },
   followUpBtn: {
-    backgroundColor: "#1a1a1c",
-    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: theme.colors.surfaceStrong,
+    borderColor: theme.colors.border,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 18,
     paddingVertical: 14,
     paddingHorizontal: 16,
+    ...theme.softShadow,
   },
-  followUpBtnText: { color: "#FFF", fontSize: 15 },
+  followUpBtnText: { color: theme.colors.text, fontSize: 15, fontWeight: "700" },
   pressed: { opacity: 0.9 },
 });

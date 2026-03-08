@@ -16,9 +16,11 @@ import * as ImagePicker from "expo-image-picker";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system";
 
+import AppHeader from "../components/AppHeader";
 import { extractPricesFromInput } from "../gemini";
 import { extractReceipt } from "../apiClient";
 import { initDb, insertManyPriceRows } from "../database";
+import { theme } from "../theme";
 
 const storeNameFallback = "User submitted";
 
@@ -354,21 +356,28 @@ export default function AddPricesScreen({ navigation }) {
     return (
       <View style={styles.safe}>
         <View style={styles.thankYou}>
-          <Text style={styles.thankYouEmoji}>✓</Text>
-          <Text style={styles.thankYouTitle}>Thank you</Text>
-          <Text style={styles.thankYouText}>Your prices have been saved. You can add more or go back.</Text>
-          <Pressable
-            style={({ pressed }) => [styles.button, pressed && styles.pressed]}
-            onPress={() => setThankYou(false)}
-          >
-            <Text style={styles.buttonText}>Add more</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.buttonOutline, pressed && styles.pressed]}
-            onPress={() => { setThankYou(false); navigation.goBack(); }}
-          >
-            <Text style={styles.buttonTextOutline}>Back to home</Text>
-          </Pressable>
+          <View style={styles.thankYouCard}>
+            <Text style={styles.thankYouEmoji}>✓</Text>
+            <Text style={styles.thankYouTitle}>Thank you</Text>
+            <Text style={styles.thankYouText}>
+              Your prices have been saved. You can add more or go back.
+            </Text>
+            <Pressable
+              style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+              onPress={() => setThankYou(false)}
+            >
+              <Text style={styles.buttonText}>Add more</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.buttonOutline, pressed && styles.pressed]}
+              onPress={() => {
+                setThankYou(false);
+                navigation.goBack();
+              }}
+            >
+              <Text style={styles.buttonTextOutline}>Back to home</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     );
@@ -386,17 +395,19 @@ export default function AddPricesScreen({ navigation }) {
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          <Pressable onPress={cancelReceipt} style={styles.backBtn}>
-            <Text style={styles.backText}>← Cancel</Text>
-          </Pressable>
-          <Text style={styles.title}>Review extraction</Text>
+          <AppHeader
+            title="Review extraction"
+            subtitle="Check the detected items and save the same receipt data flow as before."
+            onBack={cancelReceipt}
+            backLabel="Cancel"
+          />
 
           {/* Media preview */}
           {receiptMedia?.uri && (
             receiptMedia.mimeType.includes("video") ? (
               <View style={[styles.receiptPreview, styles.videoPreviewBox]}>
-                <Text style={{ fontSize: 40, marginBottom: 8 }}>🎬</Text>
-                <Text style={{ color: "#FFF", fontSize: 16 }}>Video processing</Text>
+                <Text style={styles.videoEmoji}>🎬</Text>
+                <Text style={styles.videoPreviewText}>Video processing</Text>
               </View>
             ) : (
               <Image source={{ uri: receiptMedia.uri }} style={styles.receiptPreview} resizeMode="contain" />
@@ -405,7 +416,7 @@ export default function AddPricesScreen({ navigation }) {
 
           {busy && !receiptData ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#2B6CFF" />
+              <ActivityIndicator size="large" color={theme.colors.white} />
               <Text style={styles.loadingText}>Analyzing receipt with AI…</Text>
               <Text style={styles.loadingSubtext}>This may take a few seconds</Text>
             </View>
@@ -531,10 +542,11 @@ export default function AddPricesScreen({ navigation }) {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backText}>← Back</Text>
-        </Pressable>
-        <Text style={styles.title}>Add new prices</Text>
+        <AppHeader
+          title="Add new prices"
+          subtitle="Scan a receipt or add price details manually without changing how anything works."
+          onBack={() => navigation.goBack()}
+        />
 
         {/* ── Scan Receipt section ── */}
         <View style={styles.receiptSection}>
@@ -635,148 +647,153 @@ export default function AddPricesScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0B0B0C" },
+  safe: { flex: 1, backgroundColor: theme.colors.background },
   scroll: { flex: 1 },
-  scrollContent: { padding: 20, paddingBottom: 40 },
-  backBtn: { marginBottom: 8 },
-  backText: { color: "#2B6CFF", fontSize: 16 },
-  title: { color: "#FFF", fontSize: 24, fontWeight: "700", marginBottom: 16 },
-
-  /* ── Receipt section ── */
+  scrollContent: { padding: 20, paddingTop: 20, paddingBottom: 40 },
   receiptSection: {
-    backgroundColor: "#111114",
-    borderColor: "rgba(43,108,255,0.3)",
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: theme.radius.xl,
     padding: 20,
     marginBottom: 20,
+    ...theme.shadow,
   },
-  receiptSectionTitle: { color: "#FFF", fontSize: 18, fontWeight: "700", marginBottom: 6 },
-  receiptSectionDesc: { color: "rgba(255,255,255,0.6)", fontSize: 14, lineHeight: 20, marginBottom: 14 },
+  receiptSectionTitle: { color: theme.colors.text, fontSize: 22, fontWeight: "800", marginBottom: 8 },
+  receiptSectionDesc: { color: theme.colors.textSoft, fontSize: 14, lineHeight: 20, marginBottom: 14 },
   receiptBtnRow: { flexDirection: "row", gap: 12 },
   receiptBtn: {
     flex: 1,
-    backgroundColor: "#2B6CFF",
-    borderRadius: 12,
+    backgroundColor: theme.colors.accent,
+    borderRadius: 18,
     paddingVertical: 14,
     alignItems: "center",
+    ...theme.softShadow,
   },
-  receiptBtnText: { color: "#FFF", fontSize: 15, fontWeight: "600" },
-
-  /* ── Divider ── */
+  receiptBtnText: { color: theme.colors.white, fontSize: 15, fontWeight: "800" },
   divider: { flexDirection: "row", alignItems: "center", marginBottom: 20, gap: 12 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: "rgba(255,255,255,0.1)" },
-  dividerText: { color: "rgba(255,255,255,0.4)", fontSize: 13 },
-
-  /* ── Receipt review ── */
+  dividerLine: { flex: 1, height: 1, backgroundColor: "rgba(255,248,240,0.45)" },
+  dividerText: { color: "rgba(255,248,240,0.88)", fontSize: 13, fontWeight: "700" },
   receiptPreview: {
     width: "100%",
     height: 200,
-    borderRadius: 12,
-    backgroundColor: "#141416",
+    borderRadius: 22,
+    backgroundColor: theme.colors.surfaceStrong,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   videoPreviewBox: {
     justifyContent: "center",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    ...theme.softShadow,
   },
+  videoEmoji: { fontSize: 40, marginBottom: 8 },
+  videoPreviewText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
   loadingContainer: { alignItems: "center", paddingVertical: 40, gap: 10 },
-  loadingText: { color: "#FFF", fontSize: 17, fontWeight: "600" },
-  loadingSubtext: { color: "rgba(255,255,255,0.5)", fontSize: 14 },
+  loadingText: { color: theme.colors.white, fontSize: 17, fontWeight: "700" },
+  loadingSubtext: { color: "rgba(255,248,240,0.84)", fontSize: 14 },
   receiptSummary: {
-    backgroundColor: "#141416",
-    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 18,
     padding: 14,
     marginBottom: 16,
     gap: 4,
-  },
-  summaryText: { color: "rgba(255,255,255,0.8)", fontSize: 14 },
-  summaryTotal: { fontWeight: "700", color: "#FFF", fontSize: 16, marginTop: 4 },
-  sectionTitle: { color: "#FFF", fontSize: 17, fontWeight: "700", marginBottom: 12 },
-  itemCard: {
-    backgroundColor: "#141416",
-    borderColor: "rgba(255,255,255,0.08)",
     borderWidth: 1,
-    borderRadius: 14,
+    borderColor: theme.colors.border,
+    ...theme.softShadow,
+  },
+  summaryText: { color: theme.colors.textSoft, fontSize: 14 },
+  summaryTotal: { fontWeight: "800", color: theme.colors.text, fontSize: 16, marginTop: 4 },
+  sectionTitle: { color: theme.colors.white, fontSize: 18, fontWeight: "800", marginBottom: 12 },
+  itemCard: {
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+    borderWidth: 1,
+    borderRadius: 22,
     padding: 14,
     marginBottom: 10,
+    ...theme.softShadow,
   },
   itemHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   categoryBadge: {
-    backgroundColor: "rgba(43,108,255,0.15)",
+    backgroundColor: theme.colors.accentSoft,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 999,
   },
-  categoryText: { color: "#5B9AFF", fontSize: 12, fontWeight: "600" },
+  categoryText: { color: theme.colors.accentDark, fontSize: 12, fontWeight: "700" },
   removeBtn: { padding: 4 },
-  removeBtnText: { color: "rgba(255,255,255,0.4)", fontSize: 18 },
+  removeBtnText: { color: theme.colors.textMuted, fontSize: 18 },
   itemInput: {
-    backgroundColor: "#1a1a1c",
-    borderRadius: 8,
+    backgroundColor: theme.colors.surfaceStrong,
+    borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    color: "#FFF",
+    color: theme.colors.text,
     fontSize: 15,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   itemRow: { flexDirection: "row", gap: 8 },
   itemField: { flex: 1 },
-  itemFieldLabel: { color: "rgba(255,255,255,0.5)", fontSize: 11, marginBottom: 4 },
+  itemFieldLabel: { color: theme.colors.textSoft, fontSize: 11, marginBottom: 4, fontWeight: "700" },
   itemInputSmall: {
-    backgroundColor: "#1a1a1c",
-    borderRadius: 8,
+    backgroundColor: theme.colors.surfaceStrong,
+    borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    color: "#FFF",
+    color: theme.colors.text,
     fontSize: 14,
-  },
-
-  /* ── Existing styles ── */
-  label: { color: "rgba(255,255,255,0.8)", fontSize: 13, marginBottom: 6 },
-  input: {
-    backgroundColor: "#141416",
-    borderColor: "rgba(255,255,255,0.1)",
     borderWidth: 1,
-    borderRadius: 12,
+    borderColor: theme.colors.border,
+  },
+  label: { color: theme.colors.white, fontSize: 13, fontWeight: "700", marginBottom: 6 },
+  input: {
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+    borderWidth: 1,
+    borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: "#FFF",
+    color: theme.colors.text,
     fontSize: 16,
     marginBottom: 16,
+    ...theme.softShadow,
   },
   textArea: { minHeight: 100, textAlignVertical: "top" },
   attachRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 16 },
   attachBtn: {
-    backgroundColor: "#1a1a1c",
+    backgroundColor: theme.colors.surface,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 12,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    borderColor: theme.colors.border,
+    ...theme.softShadow,
   },
-  attachLabel: { color: "#FFF", fontSize: 14 },
+  attachLabel: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
   partsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 16 },
   partChip: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#1e3a5f",
+    backgroundColor: theme.colors.accentSoft,
     paddingVertical: 6,
     paddingHorizontal: 10,
-    borderRadius: 8,
+    borderRadius: 999,
   },
-  partChipText: { color: "#FFF", fontSize: 12 },
-  partChipX: { color: "rgba(255,255,255,0.8)", fontSize: 12 },
+  partChipText: { color: theme.colors.accentDark, fontSize: 12, fontWeight: "700" },
+  partChipX: { color: theme.colors.accentDark, fontSize: 12 },
   sendBtn: {
-    backgroundColor: "#2B6CFF",
-    borderRadius: 12,
+    backgroundColor: theme.colors.accent,
+    borderRadius: 18,
     paddingVertical: 14,
     alignItems: "center",
+    ...theme.softShadow,
   },
   sendBtnDisabled: { opacity: 0.6 },
-  sendBtnText: { color: "#FFF", fontSize: 16, fontWeight: "700" },
+  sendBtnText: { color: theme.colors.white, fontSize: 16, fontWeight: "800" },
   pressed: { opacity: 0.9 },
   thankYou: {
     flex: 1,
@@ -784,28 +801,46 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 32,
   },
+  thankYouCard: {
+    width: "100%",
+    maxWidth: 420,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.xl,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 28,
+    alignItems: "center",
+    ...theme.shadow,
+  },
   thankYouEmoji: { fontSize: 64, marginBottom: 16 },
-  thankYouTitle: { color: "#FFF", fontSize: 28, fontWeight: "700", marginBottom: 8 },
+  thankYouTitle: { color: theme.colors.text, fontSize: 28, fontWeight: "800", marginBottom: 8 },
   thankYouText: {
-    color: "rgba(255,255,255,0.8)",
+    color: theme.colors.textSoft,
     fontSize: 16,
     textAlign: "center",
     marginBottom: 24,
+    lineHeight: 22,
   },
   button: {
-    backgroundColor: "#2B6CFF",
+    backgroundColor: theme.colors.accent,
     paddingVertical: 14,
     paddingHorizontal: 32,
-    borderRadius: 12,
+    borderRadius: 18,
     marginBottom: 12,
+    minWidth: 190,
+    alignItems: "center",
+    ...theme.softShadow,
   },
   buttonOutline: {
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.4)",
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceStrong,
     paddingVertical: 14,
     paddingHorizontal: 32,
-    borderRadius: 12,
+    borderRadius: 18,
+    minWidth: 190,
+    alignItems: "center",
   },
-  buttonText: { color: "#FFF", fontSize: 16, fontWeight: "600" },
-  buttonTextOutline: { color: "rgba(255,255,255,0.9)", fontSize: 16 },
+  buttonText: { color: theme.colors.white, fontSize: 16, fontWeight: "800" },
+  buttonTextOutline: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
 });

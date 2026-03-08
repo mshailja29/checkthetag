@@ -15,7 +15,9 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Location from "expo-location";
 
+import AppHeader from "../components/AppHeader";
 import { useApp } from "../context/AppContext";
+import { theme } from "../theme";
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 
@@ -199,28 +201,40 @@ export default function LocationScreen({ navigation }) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
         <View style={styles.container}>
-          <Text style={styles.title}>Use your location</Text>
-          <Text style={styles.subtitle}>
-            We use your precise location to show prices and stores near you.
-          </Text>
-          <Pressable
-            style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
-            onPress={requestLocation}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.primaryBtnText}>Allow</Text>
-            )}
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
-            onPress={() => setStep("denied")}
-            disabled={loading}
-          >
-            <Text style={styles.secondaryBtnText}>Deny</Text>
-          </Pressable>
+          <AppHeader
+            title="Use your location"
+            subtitle="We use your precise location to show prices and stores near you."
+          />
+
+          <View style={styles.heroCard}>
+            <View style={styles.heroBadge}>
+              <Text style={styles.heroBadgeText}>Fresh prices nearby</Text>
+            </View>
+            <Text style={styles.heroTitle}>Find the best deals around you faster.</Text>
+            <Text style={styles.heroText}>
+              Allow location access or enter an address manually. Your shopping flow stays
+              exactly the same.
+            </Text>
+
+            <Pressable
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+              onPress={requestLocation}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color={theme.colors.white} />
+              ) : (
+                <Text style={styles.primaryBtnText}>Allow</Text>
+              )}
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
+              onPress={() => setStep("denied")}
+              disabled={loading}
+            >
+              <Text style={styles.secondaryBtnText}>Deny</Text>
+            </Pressable>
+          </View>
         </View>
       </SafeAreaView>
     );
@@ -242,149 +256,208 @@ export default function LocationScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <View style={styles.container}>
-        <Text style={styles.title}>Search your address</Text>
-        <Text style={styles.subtitle}>
-          Start typing any address, city, or place name to find it.
-        </Text>
+        <AppHeader
+          title="Search your address"
+          subtitle="Start typing any address, city, or place name to find it."
+          onBack={() => {
+            setStep("request");
+            setManualInput("");
+            setSuggestions([]);
+          }}
+        />
 
-        <View style={styles.inputWrapper}>
-          <Text style={styles.searchIcon}>🔍</Text>
-          <TextInput
-            value={manualInput}
-            onChangeText={setManualInput}
-            placeholder="e.g. 123 Main St, Tokyo, London..."
-            placeholderTextColor="#8A8A8A"
-            style={styles.input}
-            editable={!loading}
-            autoFocus
-            returnKeyType="search"
-            onSubmitEditing={submitManual}
-          />
-          {manualInput.length > 0 && (
-            <Pressable
-              onPress={() => {
-                setManualInput("");
-                setSuggestions([]);
-              }}
-              style={styles.clearBtn}
-            >
-              <Text style={styles.clearBtnText}>✕</Text>
-            </Pressable>
-          )}
-        </View>
-
-        {/* Suggestions list */}
-        {suggestionsLoading && manualInput.trim().length > 0 && (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator color="#2B6CFF" size="small" />
-            <Text style={styles.loadingText}>Searching…</Text>
+        <View style={styles.manualCard}>
+          <View style={styles.searchPill}>
+            <Text style={styles.searchPillText}>Address lookup</Text>
           </View>
-        )}
 
-        {suggestions.length > 0 && (
-          <FlatList
-            data={suggestions}
-            keyExtractor={(item, i) => item.place_id?.toString() ?? String(i)}
-            renderItem={renderSuggestion}
-            style={styles.suggestionsList}
-            keyboardShouldPersistTaps="handled"
-          />
-        )}
+          <View style={styles.inputWrapper}>
+            <Text style={styles.searchIcon}>⌕</Text>
+            <TextInput
+              value={manualInput}
+              onChangeText={setManualInput}
+              placeholder="e.g. 123 Main St, Tokyo, London..."
+              placeholderTextColor={theme.colors.textMuted}
+              style={styles.input}
+              editable={!loading}
+              autoFocus
+              returnKeyType="search"
+              onSubmitEditing={submitManual}
+            />
+            {manualInput.length > 0 && (
+              <Pressable
+                onPress={() => {
+                  setManualInput("");
+                  setSuggestions([]);
+                }}
+                style={styles.clearBtn}
+              >
+                <Text style={styles.clearBtnText}>✕</Text>
+              </Pressable>
+            )}
+          </View>
 
-        {manualInput.trim().length > 0 &&
-          !suggestionsLoading &&
-          suggestions.length === 0 &&
-          manualInput.trim().length >= 2 && (
-            <Text style={styles.noResults}>No results found. Try a different search.</Text>
+          {suggestionsLoading && manualInput.trim().length > 0 && (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color={theme.colors.accentDark} size="small" />
+              <Text style={styles.loadingText}>Searching…</Text>
+            </View>
           )}
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.primaryBtn,
-            !manualInput.trim() && styles.disabledBtn,
-            pressed && styles.pressed,
-          ]}
-          onPress={submitManual}
-          disabled={loading || !manualInput.trim()}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.primaryBtnText}>Continue</Text>
+          {suggestions.length > 0 && (
+            <FlatList
+              data={suggestions}
+              keyExtractor={(item, i) => item.place_id?.toString() ?? String(i)}
+              renderItem={renderSuggestion}
+              style={styles.suggestionsList}
+              keyboardShouldPersistTaps="handled"
+            />
           )}
-        </Pressable>
+
+          {manualInput.trim().length > 0 &&
+            !suggestionsLoading &&
+            suggestions.length === 0 &&
+            manualInput.trim().length >= 2 && (
+              <Text style={styles.noResults}>No results found. Try a different search.</Text>
+            )}
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.primaryBtn,
+              !manualInput.trim() && styles.disabledBtn,
+              pressed && styles.pressed,
+            ]}
+            onPress={submitManual}
+            disabled={loading || !manualInput.trim()}
+          >
+            {loading ? (
+              <ActivityIndicator color={theme.colors.white} />
+            ) : (
+              <Text style={styles.primaryBtnText}>Continue</Text>
+            )}
+          </Pressable>
+        </View>
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0B0B0C" },
-  container: { flex: 1, padding: 24, justifyContent: "center", gap: 14 },
-  title: {
-    color: "#FFFFFF",
+  safe: { flex: 1, backgroundColor: theme.colors.background },
+  container: {
+    flex: 1,
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 24,
+    justifyContent: "center",
+  },
+  heroCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.xl,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    gap: 14,
+    ...theme.shadow,
+  },
+  heroBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.accentSoft,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  heroBadgeText: {
+    color: theme.colors.accentDark,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  heroTitle: {
+    color: theme.colors.text,
     fontSize: 28,
     fontWeight: "800",
-    textAlign: "center",
-    marginBottom: 4,
+    lineHeight: 33,
   },
-  subtitle: {
-    color: "rgba(255,255,255,0.65)",
-    fontSize: 16,
-    textAlign: "center",
-    marginBottom: 8,
+  heroText: {
+    color: theme.colors.textSoft,
+    fontSize: 15,
+    lineHeight: 22,
   },
-
-  /* ── Input ── */
+  manualCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.xl,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    ...theme.shadow,
+  },
+  searchPill: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.surfaceMuted,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 16,
+  },
+  searchPillText: {
+    color: theme.colors.textSoft,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#141416",
-    borderColor: "rgba(255,255,255,0.2)",
+    backgroundColor: theme.colors.surfaceStrong,
+    borderColor: theme.colors.border,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 18,
     paddingHorizontal: 12,
+    marginBottom: 14,
   },
-  searchIcon: { fontSize: 16, marginRight: 6 },
+  searchIcon: {
+    fontSize: 18,
+    marginRight: 8,
+    color: theme.colors.textSoft,
+  },
   input: {
     flex: 1,
     paddingVertical: 14,
-    color: "#FFF",
+    color: theme.colors.text,
     fontSize: 16,
   },
   clearBtn: {
     padding: 6,
   },
   clearBtnText: {
-    color: "rgba(255,255,255,0.5)",
+    color: theme.colors.textMuted,
     fontSize: 16,
   },
-
-  /* ── Suggestions ── */
   suggestionsList: {
     maxHeight: 260,
-    borderRadius: 12,
-    backgroundColor: "#141416",
-    borderColor: "rgba(255,255,255,0.1)",
+    borderRadius: 22,
+    backgroundColor: theme.colors.surfaceStrong,
+    borderColor: theme.colors.border,
     borderWidth: 1,
+    marginBottom: 16,
   },
   suggestionRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 13,
     paddingHorizontal: 14,
-    borderBottomColor: "rgba(255,255,255,0.07)",
+    borderBottomColor: "#F6DDCF",
     borderBottomWidth: 1,
   },
   suggestionPressed: {
-    backgroundColor: "rgba(43,108,255,0.15)",
+    backgroundColor: theme.colors.surfaceMuted,
   },
   suggestionIcon: {
     fontSize: 16,
     marginRight: 10,
   },
   suggestionText: {
-    color: "rgba(255,255,255,0.9)",
+    color: theme.colors.text,
     fontSize: 15,
     flex: 1,
   },
@@ -396,34 +469,35 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   loadingText: {
-    color: "rgba(255,255,255,0.5)",
+    color: theme.colors.textSoft,
     fontSize: 14,
   },
   noResults: {
-    color: "rgba(255,255,255,0.4)",
+    color: theme.colors.textSoft,
     fontSize: 14,
     textAlign: "center",
-    paddingVertical: 8,
+    paddingTop: 6,
+    paddingBottom: 16,
   },
-
-  /* ── Buttons ── */
   primaryBtn: {
-    backgroundColor: "#2B6CFF",
-    borderRadius: 14,
+    backgroundColor: theme.colors.accent,
+    borderRadius: 18,
     paddingVertical: 16,
     alignItems: "center",
+    ...theme.softShadow,
   },
-  primaryBtnText: { color: "#FFF", fontSize: 17, fontWeight: "700" },
+  primaryBtnText: { color: theme.colors.white, fontSize: 17, fontWeight: "800" },
   disabledBtn: {
     opacity: 0.4,
   },
   secondaryBtn: {
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.35)",
-    borderRadius: 14,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceStrong,
+    borderRadius: 18,
     paddingVertical: 16,
     alignItems: "center",
   },
-  secondaryBtnText: { color: "rgba(255,255,255,0.9)", fontSize: 16 },
+  secondaryBtnText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
   pressed: { opacity: 0.9 },
 });

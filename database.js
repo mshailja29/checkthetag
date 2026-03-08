@@ -20,6 +20,12 @@ async function getDb() {
       await database.execAsync(
         `CREATE INDEX IF NOT EXISTS idx_prices_item ON prices(item);`
       );
+      await database.execAsync(
+        `CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY NOT NULL,
+          value TEXT
+        );`
+      );
       return database;
     })();
   }
@@ -28,6 +34,97 @@ async function getDb() {
 
 export async function initDb() {
   await getDb();
+}
+
+export async function setSetting(key, value) {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO settings (key, value)
+     VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
+    [key, value == null ? null : JSON.stringify(value)]
+  );
+}
+
+export async function getSetting(key) {
+  const db = await getDb();
+  const row = await db.getFirstAsync(
+    `SELECT value FROM settings WHERE key = ? LIMIT 1;`,
+    [key]
+  );
+  if (!row) return null;
+  if (row.value == null) return null;
+  try {
+    return JSON.parse(row.value);
+  } catch {
+    return null;
+  }
+}
+
+export async function removeSetting(key) {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM settings WHERE key = ?;`, [key]);
+}
+
+export async function getBootstrapState() {
+  const [location, locationLabel, radiusMiles, locationCompleted, radiusCompleted, onboardingComplete] =
+    await Promise.all([
+      getSetting("location"),
+      getSetting("locationLabel"),
+      getSetting("radiusMiles"),
+      getSetting("locationCompleted"),
+      getSetting("radiusCompleted"),
+      getSetting("onboardingComplete"),
+    ]);
+
+  return {
+    location,
+    locationLabel,
+    radiusMiles,
+    locationCompleted: Boolean(locationCompleted),
+    radiusCompleted: Boolean(radiusCompleted),
+    onboardingComplete: Boolean(onboardingComplete),
+  };
+}
+
+function userSettingKey(userId, key) {
+  return `user:${userId}:${key}`;
+}
+
+export async function getUserBootstrapState(userId) {
+  if (!userId) {
+    return {
+      location: null,
+      locationLabel: null,
+      radiusMiles: null,
+      locationCompleted: false,
+      radiusCompleted: false,
+      onboardingComplete: false,
+    };
+  }
+
+  const [location, locationLabel, radiusMiles, locationCompleted, radiusCompleted, onboardingComplete] =
+    await Promise.all([
+      getSetting(userSettingKey(userId, "location")),
+      getSetting(userSettingKey(userId, "locationLabel")),
+      getSetting(userSettingKey(userId, "radiusMiles")),
+      getSetting(userSettingKey(userId, "locationCompleted")),
+      getSetting(userSettingKey(userId, "radiusCompleted")),
+      getSetting(userSettingKey(userId, "onboardingComplete")),
+    ]);
+
+  return {
+    location,
+    locationLabel,
+    radiusMiles,
+    locationCompleted: Boolean(locationCompleted),
+    radiusCompleted: Boolean(radiusCompleted),
+    onboardingComplete: Boolean(onboardingComplete),
+  };
+}
+
+export function getUserSettingKey(userId, key) {
+  return userSettingKey(userId, key);
 }
 
 export async function insertPriceRow({ item, brand, price, weight, storeName }) {

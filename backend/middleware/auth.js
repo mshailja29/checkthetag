@@ -1,14 +1,27 @@
-/**
- * Auth middleware placeholder — will be implemented in Phase 2.
- * For now, all requests pass through.
- */
-function authMiddleware(req, res, next) {
-    // Phase 2: Verify Firebase ID token from Authorization header
-    // const idToken = req.headers.authorization?.split("Bearer ")[1];
-    // if (!idToken) return res.status(401).json({ error: "Unauthorized" });
-    // const decoded = await admin.auth().verifyIdToken(idToken);
-    // req.user = decoded;
-    next();
+const jwt = require("jsonwebtoken");
+
+const JWT_SECRET = process.env.JWT_SECRET || "check-the-tag-dev-secret";
+
+function readBearerToken(req) {
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Bearer ")) return null;
+  return authHeader.slice("Bearer ".length).trim();
 }
 
-module.exports = { authMiddleware };
+function verifyAuthToken(token) {
+  return jwt.verify(token, JWT_SECRET);
+}
+
+function authMiddleware(req, res, next) {
+  const token = readBearerToken(req);
+  if (!token) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  try {
+    req.user = verifyAuthToken(token);
+    next();
+  } catch {
+    return res.status(401).json({ success: false, error: "Invalid or expired token" });
+  }
+}
+
+module.exports = { authMiddleware, JWT_SECRET, verifyAuthToken };

@@ -2,7 +2,9 @@ import React, { useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import AppHeader from "../components/AppHeader";
 import { useApp } from "../context/AppContext";
+import { theme } from "../theme";
 
 const RADIUS_OPTIONS = [
   { label: "0.5 – 2 miles", value: 2 },
@@ -24,29 +26,30 @@ export default function RadiusScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
-      <View style={styles.header}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backText}>← Back</Text>
-        </Pressable>
-      </View>
       <View style={styles.container}>
-        <Text style={styles.title}>How far will you shop?</Text>
-        <Text style={styles.subtitle}>
-          How much radius from your current location are you willing to shop?
-        </Text>
-        {locationLabel ? (
-          <Text style={styles.locationLabel}>Location: {locationLabel}</Text>
-        ) : null}
-        <View style={styles.options}>
-          {RADIUS_OPTIONS.map((opt) => (
-            <Pressable
-              key={opt.value}
-              style={({ pressed }) => [styles.option, pressed && styles.pressed]}
-              onPress={() => onSelect(opt.value)}
-            >
-              <Text style={styles.optionText}>{opt.label}</Text>
-            </Pressable>
-          ))}
+        <AppHeader
+          title="How far will you shop?"
+          subtitle="How much radius from your current location are you willing to shop?"
+          onBack={() => navigation.goBack()}
+        />
+
+        <View style={styles.panel}>
+          {locationLabel ? (
+            <View style={styles.locationPill}>
+              <Text style={styles.locationLabel}>Location: {locationLabel}</Text>
+            </View>
+          ) : null}
+          <View style={styles.options}>
+            {RADIUS_OPTIONS.map((opt) => (
+              <Pressable
+                key={opt.value}
+                style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+                onPress={() => onSelect(opt.value)}
+              >
+                <Text style={styles.optionText}>{opt.label}</Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
       </View>
     </SafeAreaView>
@@ -54,33 +57,39 @@ export default function RadiusScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0B0B0C" },
-  header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
-  backBtn: { alignSelf: "flex-start" },
-  backText: { color: "#2B6CFF", fontSize: 16 },
-  container: { flex: 1, padding: 24, paddingTop: 16 },
-  title: { color: "#FFFFFF", fontSize: 26, fontWeight: "800", textAlign: "center", marginBottom: 8 },
-  subtitle: {
-    color: "rgba(255,255,255,0.65)",
-    fontSize: 16,
-    textAlign: "center",
-    marginBottom: 24,
+  safe: { flex: 1, backgroundColor: theme.colors.background },
+  container: { flex: 1, padding: 24, paddingTop: 20 },
+  panel: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.xl,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 22,
+    ...theme.shadow,
+  },
+  locationPill: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.surfaceMuted,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    marginBottom: 22,
   },
   locationLabel: {
-    color: "rgba(255,255,255,0.5)",
+    color: theme.colors.textSoft,
     fontSize: 13,
-    textAlign: "center",
-    marginBottom: 32,
+    fontWeight: "700",
   },
   options: { gap: 14 },
   option: {
-    backgroundColor: "#141416",
+    backgroundColor: theme.colors.surfaceStrong,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.15)",
-    borderRadius: 16,
+    borderColor: theme.colors.border,
+    borderRadius: 22,
     paddingVertical: 18,
     paddingHorizontal: 20,
+    ...theme.softShadow,
   },
-  optionText: { color: "#FFF", fontSize: 17, fontWeight: "600", textAlign: "center" },
-  pressed: { opacity: 0.9, backgroundColor: "#1a1a1c" },
+  optionText: { color: theme.colors.text, fontSize: 17, fontWeight: "800", textAlign: "center" },
+  pressed: { opacity: 0.92, backgroundColor: theme.colors.surfaceMuted },
 });

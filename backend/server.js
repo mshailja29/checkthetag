@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const receiptRoutes = require("./routes/receipt");
+const authRoutes = require("./routes/auth");
 
 // Load .env for local dev
 try { require("dotenv").config(); } catch { /* dotenv optional */ }
@@ -18,6 +19,7 @@ app.get("/health", (_req, res) => {
 });
 
 // API routes
+app.use("/api/auth", authRoutes);
 app.use("/api", receiptRoutes);
 app.use("/api/gemini", require("./routes/geminiProxy"));
 

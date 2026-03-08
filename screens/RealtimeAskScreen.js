@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,7 +13,9 @@ import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system";
 import * as Speech from "expo-speech";
 
+import AppHeader from "../components/AppHeader";
 import { askRealtimeWithImageAndVoiceStream } from "../gemini";
+import { theme } from "../theme";
 
 function resolveVideoMimeType(uri) {
   const ext = (uri || "").split(".").pop()?.toLowerCase().split("?")[0];
@@ -29,42 +31,59 @@ export default function RealtimeAskScreen({ navigation }) {
   const speechQueueRef = useRef([]);
   const isSpeakingRef = useRef(false);
   const pendingSpeechBufferRef = useRef("");
+  const queuedSpeechCountRef = useRef(0);
   const [cameraReady, setCameraReady] = useState(false);
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
-  const speakNext = useCallback(() => {
+  const ensurePlaybackAudioMode = useCallback(async () => {
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+    } catch (_) {
+      // Do not block speech if audio mode reset fails.
+    }
+  }, []);
+
+  const speakNext = useCallback(async () => {
     if (isSpeakingRef.current) return;
     const next = speechQueueRef.current.shift();
     if (!next) return;
 
     isSpeakingRef.current = true;
+    await ensurePlaybackAudioMode();
     Speech.speak(next, {
       language: "en-US",
       pitch: 1,
       rate: 1.08,
       onDone: () => {
         isSpeakingRef.current = false;
-        speakNext();
+        void speakNext();
       },
       onStopped: () => {
         isSpeakingRef.current = false;
-        speakNext();
+        void speakNext();
       },
       onError: () => {
         isSpeakingRef.current = false;
-        speakNext();
+        void speakNext();
       },
     });
-  }, []);
+  }, [ensurePlaybackAudioMode]);
 
   const queueSpeech = useCallback(
     (text) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      queuedSpeechCountRef.current += 1;
       speechQueueRef.current.push(trimmed);
-      speakNext();
+      void speakNext();
     },
     [speakNext]
   );
@@ -89,6 +108,12 @@ export default function RealtimeAskScreen({ navigation }) {
     },
     [queueSpeech]
   );
+
+  useEffect(() => {
+    return () => {
+      Speech.stop();
+    };
+  }, []);
 
   const startRecording = useCallback(async () => {
     try {
@@ -143,6 +168,7 @@ export default function RealtimeAskScreen({ navigation }) {
       speechQueueRef.current = [];
       isSpeakingRef.current = false;
       pendingSpeechBufferRef.current = "";
+      queuedSpeechCountRef.current = 0;
       setStatus("Answering…");
 
       const answerText = await askRealtimeWithImageAndVoiceStream(parts, (chunk, fullText) => {
@@ -151,8 +177,11 @@ export default function RealtimeAskScreen({ navigation }) {
         setStatus(fullText.trim());
       });
 
-      pendingSpeechBufferRef.current += "";
+      await ensurePlaybackAudioMode();
       flushSpeakableText(true);
+      if (queuedSpeechCountRef.current === 0 && answerText.trim()) {
+        queueSpeech(answerText);
+      }
       setStatus(answerText);
     } catch (e) {
       Alert.alert("Error", e?.message ?? "Something went wrong.");
@@ -174,6 +203,7 @@ export default function RealtimeAskScreen({ navigation }) {
       speechQueueRef.current = [];
       isSpeakingRef.current = false;
       pendingSpeechBufferRef.current = "";
+      queuedSpeechCountRef.current = 0;
       recordingPromiseRef.current = null;
       setRecording(false);
       setStatus("");
@@ -183,13 +213,11 @@ export default function RealtimeAskScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <View style={styles.header}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backText}>← Back</Text>
-        </Pressable>
-        <Text style={styles.title}>Ask about any item</Text>
-        <Text style={styles.subtitle}>
-          Record a short video of the product and ask aloud (e.g. “Is there a nearby store where this is cheaper?”).
-        </Text>
+        <AppHeader
+          title="Ask about any item"
+          subtitle="Record a short video of the product and ask aloud to get spoken answers and cheaper nearby options."
+          onBack={() => navigation.goBack()}
+        />
       </View>
 
       <View style={styles.cameraWrap}>
@@ -203,7 +231,11 @@ export default function RealtimeAskScreen({ navigation }) {
         />
       </View>
 
-      {status ? <Text style={styles.status}>{status}</Text> : null}
+      {status ? (
+        <View style={styles.statusCard}>
+          <Text style={styles.status}>{status}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.controls}>
         {!recording ? (
@@ -238,30 +270,35 @@ export default function RealtimeAskScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0B0B0C" },
-  header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  backBtn: { marginBottom: 8 },
-  backText: { color: "#2B6CFF", fontSize: 16 },
-  title: { color: "#FFF", fontSize: 22, fontWeight: "700", marginBottom: 4 },
-  subtitle: {
-    color: "rgba(255,255,255,0.6)",
-    fontSize: 14,
-    lineHeight: 20,
-  },
+  safe: { flex: 1, backgroundColor: theme.colors.background },
+  header: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 10 },
   cameraWrap: {
     flex: 1,
     minHeight: 280,
     marginHorizontal: 20,
-    borderRadius: 16,
+    borderRadius: 28,
     overflow: "hidden",
-    backgroundColor: "#111",
+    backgroundColor: theme.colors.surface,
+    borderWidth: 3,
+    borderColor: "rgba(255,248,240,0.7)",
+    ...theme.shadow,
+  },
+  statusCard: {
+    marginTop: 14,
+    marginHorizontal: 20,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    ...theme.softShadow,
   },
   status: {
-    color: "rgba(255,255,255,0.8)",
+    color: theme.colors.text,
     fontSize: 14,
     textAlign: "center",
-    marginTop: 12,
-    paddingHorizontal: 20,
+    lineHeight: 20,
   },
   controls: {
     padding: 20,
@@ -269,17 +306,23 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   mainBtn: {
-    backgroundColor: "#2B6CFF",
-    borderRadius: 14,
+    backgroundColor: theme.colors.accent,
+    borderRadius: 18,
     paddingVertical: 16,
     alignItems: "center",
+    ...theme.softShadow,
   },
   mainBtnDisabled: { opacity: 0.6 },
-  mainBtnText: { color: "#FFF", fontSize: 17, fontWeight: "700" },
-  stopBtn: { backgroundColor: "#c0392b" },
+  mainBtnText: { color: theme.colors.white, fontSize: 17, fontWeight: "800" },
+  stopBtn: { backgroundColor: theme.colors.danger },
   cancelBtn: {
-    paddingVertical: 12,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 18,
+    paddingVertical: 14,
     alignItems: "center",
+    ...theme.softShadow,
   },
-  cancelBtnText: { color: "rgba(255,255,255,0.7)", fontSize: 16 },
+  cancelBtnText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
 });
