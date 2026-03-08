@@ -4,6 +4,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -17,8 +18,9 @@ import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system";
 
 import AppHeader from "../components/AppHeader";
+import { useApp } from "../context/AppContext";
 import { extractPricesFromInput } from "../gemini";
-import { extractReceipt } from "../apiClient";
+import { extractReceipt, saveScan } from "../apiClient";
 import { initDb, insertManyPriceRows } from "../database";
 import { theme } from "../theme";
 
@@ -55,6 +57,7 @@ async function readVideoAsBase64(uri) {
 }
 
 export default function AddPricesScreen({ navigation }) {
+  const { user, location, locationLabel } = useApp();
   const [storeName, setStoreName] = useState("");
   const [textInput, setTextInput] = useState("");
   const [parts, setParts] = useState([]);
@@ -73,10 +76,59 @@ export default function AddPricesScreen({ navigation }) {
     setParts((prev) => [...prev, part]);
   }, []);
 
+  const ensurePermission = useCallback(async ({
+    getPermission,
+    requestPermission,
+    permissionLabel,
+  }) => {
+    const currentPermission = await getPermission();
+    if (currentPermission?.granted || currentPermission?.status === "granted") {
+      return true;
+    }
+
+    if (currentPermission?.canAskAgain === false) {
+      Alert.alert(
+        "Permission required",
+        `Please accept ${permissionLabel} permission in Settings to continue.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Open Settings", onPress: () => Linking.openSettings() },
+        ]
+      );
+      return false;
+    }
+
+    const requestedPermission = await requestPermission();
+    if (requestedPermission?.granted || requestedPermission?.status === "granted") {
+      return true;
+    }
+
+    if (requestedPermission?.canAskAgain === false) {
+      Alert.alert(
+        "Permission required",
+        `Please accept ${permissionLabel} permission in Settings to continue.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Open Settings", onPress: () => Linking.openSettings() },
+        ]
+      );
+      return false;
+    }
+
+    Alert.alert(
+      "Permission required",
+      `Please accept ${permissionLabel} permission to continue.`
+    );
+    return false;
+  }, []);
+
   const pickImage = useCallback(async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Allow photo library access to attach images.");
+    const allowed = await ensurePermission({
+      getPermission: ImagePicker.getMediaLibraryPermissionsAsync,
+      requestPermission: ImagePicker.requestMediaLibraryPermissionsAsync,
+      permissionLabel: "gallery",
+    });
+    if (!allowed) {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -87,12 +139,15 @@ export default function AddPricesScreen({ navigation }) {
     if (result.canceled || !result.assets?.[0]?.base64) return;
     const a = result.assets[0];
     addPart({ type: "image", base64: a.base64, mimeType: a.mimeType || "image/jpeg" });
-  }, [addPart]);
+  }, [addPart, ensurePermission]);
 
   const takePhoto = useCallback(async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Allow camera access to take a photo.");
+    const allowed = await ensurePermission({
+      getPermission: ImagePicker.getCameraPermissionsAsync,
+      requestPermission: ImagePicker.requestCameraPermissionsAsync,
+      permissionLabel: "camera",
+    });
+    if (!allowed) {
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -103,12 +158,15 @@ export default function AddPricesScreen({ navigation }) {
     if (result.canceled || !result.assets?.[0]?.base64) return;
     const a = result.assets[0];
     addPart({ type: "image", base64: a.base64, mimeType: a.mimeType || "image/jpeg" });
-  }, [addPart]);
+  }, [addPart, ensurePermission]);
 
   const pickVideo = useCallback(async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Allow photo library access to attach videos.");
+    const allowed = await ensurePermission({
+      getPermission: ImagePicker.getMediaLibraryPermissionsAsync,
+      requestPermission: ImagePicker.requestMediaLibraryPermissionsAsync,
+      permissionLabel: "gallery",
+    });
+    if (!allowed) {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -125,12 +183,15 @@ export default function AddPricesScreen({ navigation }) {
     } catch (e) {
       Alert.alert("Error", "Could not read video file. Try a shorter clip.");
     }
-  }, [addPart]);
+  }, [addPart, ensurePermission]);
 
   const recordAudio = useCallback(async () => {
-    const { status } = await Audio.requestPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Allow microphone access to record audio.");
+    const allowed = await ensurePermission({
+      getPermission: Audio.getPermissionsAsync,
+      requestPermission: Audio.requestPermissionsAsync,
+      permissionLabel: "microphone",
+    });
+    if (!allowed) {
       return;
     }
     try {
@@ -170,7 +231,7 @@ export default function AddPricesScreen({ navigation }) {
     } catch (e) {
       Alert.alert("Recording failed", e?.message ?? "Could not start recording.");
     }
-  }, [addPart]);
+  }, [addPart, ensurePermission]);
 
   const removePart = useCallback((index) => {
     setParts((prev) => prev.filter((_, i) => i !== index));
@@ -191,6 +252,32 @@ export default function AddPricesScreen({ navigation }) {
       if (hasText) buildParts.push({ type: "text", value: textInput.trim() });
       buildParts.push(...parts);
       const extracted = await extractPricesFromInput(buildParts, store);
+      const primaryMedia = buildParts.find((part) => part.base64);
+
+      if (user?.id) {
+        await saveScan({
+          userId: user.id,
+          image: primaryMedia?.base64,
+          mimeType: primaryMedia?.mimeType,
+          scanType: "manual-multimodal",
+          storeName: store,
+          latitude: location?.latitude,
+          longitude: location?.longitude,
+          extractedData: extracted,
+          parts: buildParts,
+          locationLabel,
+          user: {
+            id: user.id,
+            name: user.name || "",
+            email: user.email || "",
+          },
+          storeContext: {
+            enteredStoreName: store,
+            source: "manual-add-prices",
+          },
+        });
+      }
+
       if (extracted.length > 0) {
         await insertManyPriceRows(extracted, store);
       }
@@ -202,13 +289,16 @@ export default function AddPricesScreen({ navigation }) {
     } finally {
       setBusy(false);
     }
-  }, [textInput, parts, storeName]);
+  }, [location?.latitude, location?.longitude, locationLabel, parts, storeName, textInput, user]);
 
   /* ───────── Receipt scanning flow ───────── */
   const scanReceiptFromCamera = useCallback(async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Allow camera access to scan receipts.");
+    const allowed = await ensurePermission({
+      getPermission: ImagePicker.getCameraPermissionsAsync,
+      requestPermission: ImagePicker.requestCameraPermissionsAsync,
+      permissionLabel: "camera",
+    });
+    if (!allowed) {
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -240,12 +330,15 @@ export default function AddPricesScreen({ navigation }) {
     setReceiptMedia({ base64, uri: a.uri, mimeType: mime });
     setReceiptMode(true);
     await processReceiptMedia(base64, mime);
-  }, []);
+  }, [ensurePermission]);
 
   const scanReceiptFromGallery = useCallback(async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Allow photo library access to pick receipts.");
+    const allowed = await ensurePermission({
+      getPermission: ImagePicker.getMediaLibraryPermissionsAsync,
+      requestPermission: ImagePicker.requestMediaLibraryPermissionsAsync,
+      permissionLabel: "gallery",
+    });
+    if (!allowed) {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -282,7 +375,7 @@ export default function AddPricesScreen({ navigation }) {
     setReceiptMedia({ base64, uri: a.uri, mimeType: mime });
     setReceiptMode(true);
     await processReceiptMedia(base64, mime);
-  }, []);
+  }, [ensurePermission]);
 
   const processReceiptMedia = async (base64, mimeType) => {
     setBusy(true);
@@ -330,6 +423,37 @@ export default function AddPricesScreen({ navigation }) {
         price: item.price,
         weight: item.weight || "",
       }));
+
+      if (user?.id) {
+        await saveScan({
+          userId: user.id,
+          image: receiptMedia?.base64,
+          mimeType: receiptMedia?.mimeType,
+          scanType: "receipt-review",
+          storeName: store,
+          latitude: location?.latitude,
+          longitude: location?.longitude,
+          extractedData: rows,
+          parts: receiptMedia?.base64
+            ? [{ type: receiptMedia.mimeType?.includes("video") ? "video" : "image", base64: receiptMedia.base64, mimeType: receiptMedia.mimeType }]
+            : [],
+          locationLabel,
+          user: {
+            id: user.id,
+            name: user.name || "",
+            email: user.email || "",
+          },
+          storeContext: {
+            enteredStoreName: store,
+            detectedStoreName: receiptData?.storeName || "",
+            detectedStoreAddress: receiptData?.storeAddress || "",
+            receiptDate: receiptData?.date || "",
+            receiptTotal: receiptData?.total ?? null,
+            source: "receipt-review",
+          },
+        });
+      }
+
       await insertManyPriceRows(rows, store);
       setThankYou(true);
       setReceiptMode(false);
@@ -341,7 +465,20 @@ export default function AddPricesScreen({ navigation }) {
     } finally {
       setBusy(false);
     }
-  }, [editingItems, receiptStoreName]);
+  }, [
+    editingItems,
+    location?.latitude,
+    location?.longitude,
+    locationLabel,
+    receiptData?.date,
+    receiptData?.storeAddress,
+    receiptData?.storeName,
+    receiptData?.total,
+    receiptMedia?.base64,
+    receiptMedia?.mimeType,
+    receiptStoreName,
+    user,
+  ]);
 
   const cancelReceipt = () => {
     setReceiptMode(false);

@@ -207,9 +207,35 @@ export async function comparePrices(product, latitude, longitude, radius = 3) {
 
 // CLOUD ENDPOINTS - Scans
 
-export async function saveScan({ userId, image, mimeType, scanType, storeName, storeId, latitude, longitude, extractedData }) {
+export async function saveScan({
+  userId,
+  image,
+  mimeType,
+  scanType,
+  storeName,
+  storeId,
+  latitude,
+  longitude,
+  extractedData,
+  parts,
+  locationLabel,
+  user,
+  storeContext,
+}) {
   const json = await fetchApi("/api/scans", {
-    userId, image, mimeType, scanType, storeName, storeId, latitude, longitude, extractedData,
+    userId,
+    image,
+    mimeType,
+    scanType,
+    storeName,
+    storeId,
+    latitude,
+    longitude,
+    extractedData,
+    parts,
+    locationLabel,
+    user,
+    storeContext,
   });
   return json;
 }

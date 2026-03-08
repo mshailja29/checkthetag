@@ -5,5 +5,12 @@
     "email": "mshailja29@gmail.com",
     "passwordHash": "$2b$10$dDCwPQHVMuHes/fowmhDwee62Z15zve9F.xk9hp5ZI.gMwzY46sca",
     "createdAt": "2026-03-08T16:21:53.676Z"
+  },
+  {
+    "id": "user_1772991099277",
+    "name": "V",
+    "email": "v@gmail.com",
+    "passwordHash": "$2b$10$g4TPEmoY41jBMPf5jFDsDuX7Sfw.WOXqnxVmUyfQpLwcBNV/BlQLC",
+    "createdAt": "2026-03-08T17:31:39.277Z"
   }
 ]

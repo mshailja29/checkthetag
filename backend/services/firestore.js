@@ -181,7 +181,24 @@ async function findPricesByStore(storeId) {
 // SCANS
 // ═══════════════════════════════════════════
 
-async function createScan({ userId, mediaUrl, mediaPath, mimeType, scanType, storeName, storeId, latitude, longitude, extractedData }) {
+async function createScan({
+    userId,
+    mediaUrl,
+    mediaPath,
+    mimeType,
+    scanType,
+    storeName,
+    storeId,
+    latitude,
+    longitude,
+    extractedData,
+    mediaItems,
+    textInputs,
+    locationLabel,
+    userSnapshot,
+    storeContext,
+    extractedSummary,
+}) {
     const geohash = latitude && longitude ? encodeGeohash(latitude, longitude) : null;
     const ref = db.collection("scans").doc();
     await ref.set({
@@ -189,7 +206,13 @@ async function createScan({ userId, mediaUrl, mediaPath, mimeType, scanType, sto
         mimeType: mimeType || null, scanType: scanType || "receipt",
         storeName: storeName || null, storeId: storeId || null,
         latitude: latitude || null, longitude: longitude || null, geohash,
+        locationLabel: locationLabel || null,
+        userSnapshot: userSnapshot || null,
+        storeContext: storeContext || null,
+        mediaItems: Array.isArray(mediaItems) ? mediaItems : [],
+        textInputs: Array.isArray(textInputs) ? textInputs : [],
         extractedData: extractedData || null, itemCount: Array.isArray(extractedData) ? extractedData.length : 0,
+        extractedSummary: extractedSummary || null,
         createdAt: FieldValue.serverTimestamp(),
     });
     return ref.id;
