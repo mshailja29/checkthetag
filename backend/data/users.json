@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "id": "user_1772986913676",
+    "name": "Shailja",
+    "email": "mshailja29@gmail.com",
+    "passwordHash": "$2b$10$dDCwPQHVMuHes/fowmhDwee62Z15zve9F.xk9hp5ZI.gMwzY46sca",
+    "createdAt": "2026-03-08T16:21:53.676Z"
+  }
+]
