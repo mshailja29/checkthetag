@@ -1,8 +1,8 @@
-# PriceScout AI
+# Check The Tag
 
 **Smart grocery price comparison powered by Google Gemini 2.5 Flash**
 
-PriceScout AI is a mobile app that helps shoppers find the best grocery prices in real time. Point your camera at any product, ask a question by voice, and get instant answers — powered by an agentic AI that searches both a crowdsourced price database and the web.
+Check The Tag is a mobile app that helps shoppers find the best grocery prices in real time. Point your camera at any product, ask a question by voice, and get instant answers — powered by an agentic AI that searches both a crowdsourced price database and the web.
 
 ---
 
