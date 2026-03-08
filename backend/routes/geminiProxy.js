@@ -189,6 +189,18 @@ async function groundedGenerate(model, originalPromptParts, dbResults) {
 
     const answerInstruction = `${dbContext}\n\nNow answer the user's question using the database results above AND your knowledge of current market prices, product info, or alternatives. Be concise (1-3 sentences, spoken style).`;
 
+    // When media is present, answer directly from the attached image/audio/video.
+    // Text-only grounding would drop the actual camera or voice context.
+    if (mediaParts.length > 0) {
+        const allParts = [...originalPromptParts, { text: answerInstruction }];
+        const result = await model.generateContent({
+            contents: [{ role: "user", parts: allParts }],
+        });
+        const candidate = result?.response?.candidates?.[0];
+        const text = (candidate?.content?.parts || []).map((p) => p.text || "").join("");
+        return { text, groundingMetadata: null };
+    }
+
     // Try grounding with text-only parts first
     try {
         const groundedTextParts = [...textParts, { text: answerInstruction }];
@@ -290,6 +302,15 @@ function buildVertexParts(parts) {
         }
     }
     return vertexParts;
+}
+
+function splitPromptParts(parts) {
+    const allParts = buildVertexParts(parts);
+    return {
+        allParts,
+        textParts: allParts.filter((part) => part.text),
+        mediaParts: allParts.filter((part) => part.inlineData),
+    };
 }
 
 
@@ -452,10 +473,11 @@ router.post("/realtime-ask-stream", async (req, res) => {
                 : "";
 
         const model = vertexAI.getGenerativeModel({ model: MODEL });
+        const { allParts: originalParts, textParts: originalTextParts, mediaParts } = splitPromptParts(parts);
 
         // Phase 1: Firestore function calling (non-streaming)
         const toolPrompt = `${REALTIME_SYSTEM_PROMPT}${locationCtx}${localDataCtx}\n\nFirst, use your database tools to look up relevant price data for the product shown.`;
-        const toolParts = [{ text: toolPrompt }, ...buildVertexParts(parts)];
+        const toolParts = [{ text: toolPrompt }, ...originalParts];
 
         const { dbResults } = await firestoreAgenticLoop(
             model,
@@ -470,14 +492,14 @@ router.post("/realtime-ask-stream", async (req, res) => {
 
         const answerInstruction = `${dbContext}\n\nNow answer the user's question using the database results above AND your knowledge of current market prices, product info, or alternatives. Be concise (1-3 sentences, spoken style).`;
 
-        const mediaParts = buildVertexParts(parts);
         const textOnlyParts = [
             { text: `${REALTIME_SYSTEM_PROMPT}${locationCtx}${localDataCtx}` },
+            ...originalTextParts,
             { text: answerInstruction },
         ];
         const allParts = [
             { text: `${REALTIME_SYSTEM_PROMPT}${locationCtx}${localDataCtx}` },
-            ...mediaParts,
+            ...originalParts,
             { text: answerInstruction },
         ];
 
@@ -485,19 +507,27 @@ router.post("/realtime-ask-stream", async (req, res) => {
         res.setHeader("Cache-Control", "no-cache, no-transform");
         res.setHeader("Connection", "keep-alive");
 
-        // Try streaming with Google Search grounding (text-only), fall back to plain with media
+        // If media is attached, prioritize answering from the actual image/audio/video.
+        // Google Search grounding only supports text, so using it here would drop the camera/voice context.
         let streamingResult;
-        try {
-            streamingResult = await model.generateContentStream({
-                contents: [{ role: "user", parts: textOnlyParts }],
-                tools: [GROUNDING_TOOL],
-            });
-            console.log("[realtime-ask-stream] Phase 2: Google Search grounding stream started");
-        } catch (groundErr) {
-            console.warn("[realtime-ask-stream] Grounding failed, falling back:", groundErr.message);
+        if (mediaParts.length > 0) {
             streamingResult = await model.generateContentStream({
                 contents: [{ role: "user", parts: allParts }],
             });
+            console.log("[realtime-ask-stream] Phase 2: media-aware stream started");
+        } else {
+            try {
+                streamingResult = await model.generateContentStream({
+                    contents: [{ role: "user", parts: textOnlyParts }],
+                    tools: [GROUNDING_TOOL],
+                });
+                console.log("[realtime-ask-stream] Phase 2: Google Search grounding stream started");
+            } catch (groundErr) {
+                console.warn("[realtime-ask-stream] Grounding failed, falling back:", groundErr.message);
+                streamingResult = await model.generateContentStream({
+                    contents: [{ role: "user", parts: allParts }],
+                });
+            }
         }
 
         let sentAnyText = false;
