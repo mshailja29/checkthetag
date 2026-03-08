@@ -4,6 +4,7 @@ import {
   Alert,
   Animated,
   FlatList,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -33,6 +34,7 @@ export default function RealtimeAskScreen({ navigation }) {
   const isSpeakingRef = useRef(false);
   const pendingSpeechBufferRef = useRef("");
   const queuedSpeechCountRef = useRef(0);
+  const lastAiSpeechRef = useRef("");
   const flatListRef = useRef(null);
   const conversationHistoryRef = useRef([]);
   const silenceTimerRef = useRef(null);
@@ -109,6 +111,65 @@ export default function RealtimeAskScreen({ navigation }) {
     } catch (_) {}
   }, []);
 
+  const speakText = useCallback(async (text) => {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return false;
+
+    const trySpeak = (iosUsesAppSession) => new Promise((resolve) => {
+      let settled = false;
+      const finish = (started) => {
+        if (settled) return;
+        settled = true;
+        resolve(started);
+      };
+
+      const timeoutId = setTimeout(() => finish(false), 1200);
+
+      try {
+        Speech.speak(trimmed, {
+          language: "en-US",
+          pitch: 1,
+          rate: 1.0,
+          volume: 1,
+          ...(Platform.OS === "ios" ? { useApplicationAudioSession: iosUsesAppSession } : {}),
+          onStart: () => {
+            clearTimeout(timeoutId);
+            finish(true);
+          },
+          onDone: () => {
+            clearTimeout(timeoutId);
+            isSpeakingRef.current = false;
+            void speakNext();
+          },
+          onStopped: () => {
+            clearTimeout(timeoutId);
+            isSpeakingRef.current = false;
+            void speakNext();
+          },
+          onError: () => {
+            clearTimeout(timeoutId);
+            isSpeakingRef.current = false;
+            void speakNext();
+            finish(false);
+          },
+        });
+      } catch (_) {
+        clearTimeout(timeoutId);
+        finish(false);
+      }
+    });
+
+    await ensurePlaybackAudioMode();
+
+    const startedWithAppSession = await trySpeak(true);
+    if (startedWithAppSession || Platform.OS !== "ios") {
+      return startedWithAppSession;
+    }
+
+    // iOS fallback: let the system speech session manage playback.
+    return trySpeak(false);
+  }, [ensurePlaybackAudioMode]);
+
   // ─── Speech queue (TTS) with auto-restart listening ───
 
   const autoRestartListening = useCallback(() => {
@@ -134,16 +195,17 @@ export default function RealtimeAskScreen({ navigation }) {
 
     isSpeakingRef.current = true;
     setVoiceStatus("Speaking...");
-    await ensurePlaybackAudioMode();
-    Speech.speak(next, {
-      language: "en-US",
-      pitch: 1,
-      rate: 1.1,
-      onDone: () => { isSpeakingRef.current = false; void speakNext(); },
-      onStopped: () => { isSpeakingRef.current = false; void speakNext(); },
-      onError: () => { isSpeakingRef.current = false; void speakNext(); },
-    });
-  }, [ensurePlaybackAudioMode, autoRestartListening]);
+    lastAiSpeechRef.current = next;
+    const started = await speakText(next);
+    if (!started) {
+      isSpeakingRef.current = false;
+      setVoiceStatus("Audio unavailable");
+      setTimeout(() => {
+        setVoiceStatus(conversationModeRef.current ? "Listening..." : "");
+      }, 1200);
+      autoRestartListening();
+    }
+  }, [speakText, autoRestartListening]);
 
   const queueSpeech = useCallback((text) => {
     const trimmed = text.trim();
@@ -175,6 +237,15 @@ export default function RealtimeAskScreen({ navigation }) {
     pendingSpeechBufferRef.current = "";
     queuedSpeechCountRef.current = 0;
   }, []);
+
+  const replayLastAnswer = useCallback(async () => {
+    const latest = lastAiSpeechRef.current.trim();
+    if (!latest || busyRef.current) return;
+    stopAllSpeech();
+    speechQueueRef.current = [latest];
+    queuedSpeechCountRef.current = 1;
+    await speakNext();
+  }, [speakNext, stopAllSpeech]);
 
   // ─── Cleanup ───
 
@@ -213,6 +284,7 @@ export default function RealtimeAskScreen({ navigation }) {
   }, []);
 
   const updateLastAiMessage = useCallback((text) => {
+    lastAiSpeechRef.current = text?.trim?.() || "";
     setMessages(prev => {
       const copy = [...prev];
       for (let i = copy.length - 1; i >= 0; i--) {
@@ -642,6 +714,16 @@ export default function RealtimeAskScreen({ navigation }) {
         </Pressable>
       </View>
 
+      <View style={styles.secondaryBar}>
+        <Pressable
+          style={[styles.replayBtn, (!lastAiSpeechRef.current || busy) && styles.btnDisabled]}
+          onPress={replayLastAnswer}
+          disabled={!lastAiSpeechRef.current || busy}
+        >
+          <Text style={styles.replayBtnText}>Replay Answer</Text>
+        </Pressable>
+      </View>
+
       {/* End session button */}
       <Pressable style={styles.endBtn} onPress={endSession}>
         <Text style={styles.endBtnText}>
@@ -790,6 +872,10 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     gap: 8,
   },
+  secondaryBar: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
   micBtn: {
     width: 52,
     height: 52,
@@ -836,6 +922,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "900",
     color: "#fff",
+  },
+  replayBtn: {
+    backgroundColor: theme.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 14,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  replayBtnText: {
+    color: theme.colors.text,
+    fontSize: 14,
+    fontWeight: "700",
   },
   btnDisabled: { opacity: 0.5 },
   endBtn: {
