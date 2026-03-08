@@ -18,7 +18,8 @@
       "bundleIdentifier": "com.checkthetag.app",
       "infoPlist": {
         "NSCameraUsageDescription": "Check the Tag needs camera access to scan receipts and shelf tags.",
-        "NSPhotoLibraryUsageDescription": "Check the Tag needs photo library access to pick receipt images."
+        "NSPhotoLibraryUsageDescription": "Check the Tag needs photo library access to pick receipt images.",
+        "NSMicrophoneUsageDescription": "Check the Tag needs microphone access to record questions with video."
       }
     },
     "android": {
@@ -27,14 +28,29 @@
       },
       "package": "com.checkthetag.app",
       "permissions": [
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "plugins": [
       [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Check the Tag uses your location to show prices and stores near you."
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "cameraPermission": "Check the Tag needs camera access to scan receipts and shelf tags."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Check the Tag needs camera access to scan items and ask questions in real time.",
+          "microphonePermission": "Check the Tag needs microphone access to record questions with video."
         }
       ],
       "expo-asset",

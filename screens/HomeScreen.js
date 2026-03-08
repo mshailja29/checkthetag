@@ -5,24 +5,29 @@ import { SafeAreaView } from "react-native-safe-area-context";
 export default function HomeScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <View style={styles.header}>
+        <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Text style={styles.backText}>← Back</Text>
+        </Pressable>
+      </View>
       <View style={styles.container}>
         <Text style={styles.title}>Check the Tag</Text>
-        <Text style={styles.subtitle}>Compare prices and add new ones</Text>
+        <Text style={styles.subtitle}>Compare prices and ask about any item in real time</Text>
 
         <Pressable
           style={({ pressed }) => [styles.card, styles.cardPrimary, pressed && styles.pressed]}
-          onPress={() => navigation.navigate("CheckPrices")}
+          onPress={() => navigation.navigate("AddPrices")}
         >
-          <Text style={styles.cardTitle}>Check latest prices</Text>
-          <Text style={styles.cardDesc}>Search by product, store, or brand and see AI-powered results</Text>
+          <Text style={styles.cardTitle}>Add a product price</Text>
+          <Text style={styles.cardDesc}>Send receipt or tag via text, image, video, or audio to save prices</Text>
         </Pressable>
 
         <Pressable
           style={({ pressed }) => [styles.card, styles.cardSecondary, pressed && styles.pressed]}
-          onPress={() => navigation.navigate("AddPrices")}
+          onPress={() => navigation.navigate("RealtimeAsk")}
         >
-          <Text style={styles.cardTitle}>Add new prices</Text>
-          <Text style={styles.cardDesc}>Send receipt or tag via text, image, video, or audio</Text>
+          <Text style={styles.cardTitle}>Ask questions realtime about any item</Text>
+          <Text style={styles.cardDesc}>Scan an item with your camera, ask aloud—get spoken answers, alternatives, or cheaper nearby prices</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -31,6 +36,9 @@ export default function HomeScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#0B0B0C" },
+  header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
+  backBtn: { alignSelf: "flex-start", marginBottom: 8 },
+  backText: { color: "#2B6CFF", fontSize: 16 },
   container: { flex: 1, padding: 24, justifyContent: "center", gap: 20 },
   title: { color: "#FFFFFF", fontSize: 32, fontWeight: "800", textAlign: "center", marginBottom: 4 },
   subtitle: { color: "rgba(255,255,255,0.65)", fontSize: 16, textAlign: "center", marginBottom: 32 },

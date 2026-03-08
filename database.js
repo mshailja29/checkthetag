@@ -104,6 +104,21 @@ export async function getCheapestOtherStoreForItem(item, currentStoreName) {
   return row ? { ...row, price: Number(row.price) } : null;
 }
 
+/** Returns first price row for item at a given store, or null. */
+export async function getPriceForItemAtStore(item, storeName) {
+  const normalizedItem = (item ?? "").trim();
+  const normalizedStore = (storeName ?? "").trim();
+  if (!normalizedItem || !normalizedStore) return null;
+
+  const db = await getDb();
+  const row = await db.getFirstAsync(
+    `SELECT item, brand, price, weight, storeName FROM prices
+     WHERE item = ? AND storeName = ? LIMIT 1;`,
+    [normalizedItem, normalizedStore]
+  );
+  return row ? { ...row, price: Number(row.price) } : null;
+}
+
 export async function getAllPricesForItem(item) {
   const normalizedItem = (item ?? "").trim();
   if (!normalizedItem) return [];
