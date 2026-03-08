@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Check the Tag",
+    "slug": "check-the-tag",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "newArchEnabled": false,
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0B0B0C"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.checkthetag.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Check the Tag needs camera access to scan receipts and shelf tags.",
+        "NSPhotoLibraryUsageDescription": "Check the Tag needs photo library access to pick receipt images."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0B0C"
+      },
+      "package": "com.checkthetag.app",
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Check the Tag needs camera access to scan receipts and shelf tags."
+        }
+      ],
+      "expo-asset",
+      "expo-sqlite"
+    ]
+  }
+}
