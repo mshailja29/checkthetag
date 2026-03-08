@@ -1,11 +1,5 @@
 const express = require("express");
-const fs = require("fs/promises");
-const os = require("os");
-const path = require("path");
-const crypto = require("crypto");
-const { spawn } = require("child_process");
 const { VertexAI } = require("@google-cloud/vertexai");
-const ffmpegPath = require("ffmpeg-static");
 
 const router = express.Router();
 
@@ -58,124 +52,35 @@ Rules:
 - If database is provided and the user asks about cheaper prices or nearby stores, base your answer only on that data. Name the store and price when relevant.
 - If the user did not ask about prices, ignore the database and answer from the image and general knowledge.`;
 
-function getBase64SizeBytes(base64) {
-    return Buffer.byteLength(base64, "base64");
-}
-
-function formatKB(bytes) {
-    return `${Math.round(bytes / 1024)}KB`;
-}
-
-function resolveCompressedMimeType(mimeType) {
-    if (mimeType === "video/webm") return "video/webm";
-    return "video/mp4";
-}
-
-function runFfmpeg(args) {
-    return new Promise((resolve, reject) => {
-        const proc = spawn(ffmpegPath, args);
-        let stderr = "";
-
-        proc.stderr.on("data", (chunk) => {
-            stderr += chunk.toString();
-        });
-
-        proc.on("error", reject);
-        proc.on("close", (code) => {
-            if (code === 0) {
-                resolve();
-                return;
-            }
-            reject(new Error(`ffmpeg failed with code ${code}: ${stderr.slice(-2000)}`));
-        });
-    });
-}
-
-async function compressVideoPart(part) {
-    if (part.type !== "video" || !part.base64 || !ffmpegPath) return part;
-
-    const originalBytes = getBase64SizeBytes(part.base64);
-    const tmpId = crypto.randomUUID();
-    const inputPath = path.join(os.tmpdir(), `${tmpId}-input`);
-    const outputPath = path.join(os.tmpdir(), `${tmpId}-output.mp4`);
-
-    try {
-        await fs.writeFile(inputPath, Buffer.from(part.base64, "base64"));
-
-        await runFfmpeg([
-            "-y",
-            "-i",
-            inputPath,
-            "-vf",
-            "fps=10,scale=640:-2:force_original_aspect_ratio=decrease",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "33",
-            "-profile:v",
-            "baseline",
-            "-level",
-            "3.0",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "32k",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            outputPath,
-        ]);
-
-        const compressedBuffer = await fs.readFile(outputPath);
-        const compressedBase64 = compressedBuffer.toString("base64");
-        const compressedBytes = compressedBuffer.length;
-        const reduction = Math.max(0, Math.round((1 - compressedBytes / Math.max(originalBytes, 1)) * 100));
-
-        console.log(
-            `[compressVideoPart] ${formatKB(originalBytes)} -> ${formatKB(compressedBytes)} (${reduction}% smaller)`
-        );
-
-        return {
-            ...part,
-            base64: compressedBase64,
-            mimeType: resolveCompressedMimeType(part.mimeType),
-        };
-    } catch (err) {
-        console.warn("[compressVideoPart] Compression failed, using original video:", err.message);
-        return part;
-    } finally {
-        await Promise.allSettled([
-            fs.unlink(inputPath),
-            fs.unlink(outputPath),
-        ]);
+function buildRealtimePrompt(dbRows = []) {
+    if (!Array.isArray(dbRows) || dbRows.length === 0) {
+        return `${REALTIME_SYSTEM_PROMPT}\n\nNo price database was provided for this request, so answer only from the uploaded media and general knowledge.`;
     }
+    return `${REALTIME_SYSTEM_PROMPT}\n\nDatabase of known prices for this or similar items (use only if user asks about price or cheaper store):\n${JSON.stringify(dbRows)}`;
+}
+
+function extractResponseText(responseLike) {
+    const parts = responseLike?.candidates?.[0]?.content?.parts;
+    if (!Array.isArray(parts)) return "";
+    return parts.map((part) => part?.text || "").join("");
 }
 
 /**
  * Convert frontend parts to VertexAI parts format
  */
-async function buildVertexParts(parts) {
+function buildVertexParts(parts) {
     const vertexParts = [];
     for (const p of parts) {
         if (p.type === "text" && p.value?.trim()) {
             vertexParts.push({ text: p.value.trim() });
         } else if ((p.type === "image" || p.type === "video" || p.type === "audio") && p.base64) {
-            const part = p.type === "video" ? await compressVideoPart(p) : p;
-            const mimeType = part.mimeType || (part.type === "image" ? "image/jpeg" : part.type === "video" ? "video/mp4" : "audio/mpeg");
-            console.log(
-                `[buildVertexParts] type=${part.type} mimeType=${mimeType} size=${formatKB(getBase64SizeBytes(part.base64))}`
-            );
+            const mimeType = p.mimeType || (p.type === "image" ? "image/jpeg" : p.type === "video" ? "video/mp4" : "audio/mpeg");
+            const sizeKB = Math.round(p.base64.length / 1024);
+            console.log(`[buildVertexParts] type=${p.type} mimeType=${mimeType} size=${sizeKB}KB`);
             vertexParts.push({
                 inlineData: {
                     mimeType,
-                    data: part.base64,
+                    data: p.base64,
                 },
             });
         }
@@ -192,7 +97,7 @@ router.post("/extract-prices", async (req, res) => {
         if (!Array.isArray(parts)) return res.status(400).json({ error: "parts must be an array" });
 
         const model = vertexAI.getGenerativeModel({ model: MODEL });
-        const geminiParts = [{ text: EXTRACT_PROMPT }, ...(await buildVertexParts(parts))];
+        const geminiParts = [{ text: EXTRACT_PROMPT }, ...buildVertexParts(parts)];
 
         const result = await model.generateContent({
             contents: [{ role: "user", parts: geminiParts }],
@@ -243,9 +148,9 @@ router.post("/realtime-ask", async (req, res) => {
         const { parts, dbRows } = req.body;
         if (!Array.isArray(parts)) return res.status(400).json({ error: "parts must be an array" });
 
-        const prompt = `${REALTIME_SYSTEM_PROMPT}\n\nDatabase of known prices for this or similar items (use only if user asks about price or cheaper store):\n${JSON.stringify(dbRows || [])}`;
+        const prompt = buildRealtimePrompt(dbRows);
 
-        const geminiParts = [{ text: prompt }, ...(await buildVertexParts(parts))];
+        const geminiParts = [{ text: prompt }, ...buildVertexParts(parts)];
         const model = vertexAI.getGenerativeModel({ model: MODEL });
 
         const result = await model.generateContent({
@@ -259,6 +164,52 @@ router.post("/realtime-ask", async (req, res) => {
     } catch (err) {
         console.error("[realtime-ask]", err);
         res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/gemini/realtime-ask-stream
+router.post("/realtime-ask-stream", async (req, res) => {
+    try {
+        const { parts, dbRows } = req.body;
+        if (!Array.isArray(parts)) return res.status(400).json({ error: "parts must be an array" });
+
+        const prompt = buildRealtimePrompt(dbRows);
+        const geminiParts = [{ text: prompt }, ...buildVertexParts(parts)];
+        const model = vertexAI.getGenerativeModel({ model: MODEL });
+
+        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+
+        const streamingResult = await model.generateContentStream({
+            contents: [{ role: "user", parts: geminiParts }],
+        });
+
+        let sentAnyText = false;
+
+        for await (const chunk of streamingResult.stream) {
+            const text = extractResponseText(chunk);
+            if (!text) continue;
+            sentAnyText = true;
+            res.write(`${JSON.stringify({ text })}\n`);
+        }
+
+        if (!sentAnyText) {
+            const aggregated = await streamingResult.response;
+            const text = extractResponseText(aggregated).trim() || "I couldn't generate an answer. Try again.";
+            res.write(`${JSON.stringify({ text })}\n`);
+        }
+
+        res.write(`${JSON.stringify({ done: true })}\n`);
+        res.end();
+    } catch (err) {
+        console.error("[realtime-ask-stream]", err);
+        if (!res.headersSent) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.write(`${JSON.stringify({ error: err.message || "Realtime stream failed" })}\n`);
+        res.end();
     }
 });
 

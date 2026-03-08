@@ -13,16 +13,7 @@ import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system";
 import * as Speech from "expo-speech";
 
-import { useApp } from "../context/AppContext";
-import { askRealtimeWithImageAndVoice, extractPricesFromInput } from "../gemini";
-import {
-  getAllPricesForItem,
-  getPriceForItemAtStore,
-  insertPriceRow,
-  initDb,
-} from "../database";
-
-const SCANNED_STORE = "Scanned";
+import { askRealtimeWithImageAndVoiceStream } from "../gemini";
 
 function resolveVideoMimeType(uri) {
   const ext = (uri || "").split(".").pop()?.toLowerCase().split("?")[0];
@@ -33,13 +24,71 @@ function resolveVideoMimeType(uri) {
 }
 
 export default function RealtimeAskScreen({ navigation }) {
-  const { locationLabel } = useApp();
   const cameraRef = useRef(null);
   const recordingPromiseRef = useRef(null);
+  const speechQueueRef = useRef([]);
+  const isSpeakingRef = useRef(false);
+  const pendingSpeechBufferRef = useRef("");
   const [cameraReady, setCameraReady] = useState(false);
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+
+  const speakNext = useCallback(() => {
+    if (isSpeakingRef.current) return;
+    const next = speechQueueRef.current.shift();
+    if (!next) return;
+
+    isSpeakingRef.current = true;
+    Speech.speak(next, {
+      language: "en-US",
+      pitch: 1,
+      rate: 1.08,
+      onDone: () => {
+        isSpeakingRef.current = false;
+        speakNext();
+      },
+      onStopped: () => {
+        isSpeakingRef.current = false;
+        speakNext();
+      },
+      onError: () => {
+        isSpeakingRef.current = false;
+        speakNext();
+      },
+    });
+  }, []);
+
+  const queueSpeech = useCallback(
+    (text) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      speechQueueRef.current.push(trimmed);
+      speakNext();
+    },
+    [speakNext]
+  );
+
+  const flushSpeakableText = useCallback(
+    (force = false) => {
+      let buffer = pendingSpeechBufferRef.current;
+      let match = buffer.match(/^([\s\S]*?[.!?])(\s|$)/);
+
+      while (match) {
+        queueSpeech(match[1]);
+        buffer = buffer.slice(match[0].length);
+        match = buffer.match(/^([\s\S]*?[.!?])(\s|$)/);
+      }
+
+      if (force && buffer.trim()) {
+        queueSpeech(buffer);
+        buffer = "";
+      }
+
+      pendingSpeechBufferRef.current = buffer;
+    },
+    [queueSpeech]
+  );
 
   const startRecording = useCallback(async () => {
     try {
@@ -88,52 +137,23 @@ export default function RealtimeAskScreen({ navigation }) {
         return;
       }
 
-      await initDb();
-
       const parts = [{ type: "video", base64: videoBase64, mimeType }];
 
-      let dbRows = [];
-      let extractedItems = [];
-      try {
-        extractedItems = await extractPricesFromInput(
-          [{ type: "video", base64: videoBase64, mimeType }],
-          SCANNED_STORE
-        );
-        for (const it of extractedItems) {
-          const rows = await getAllPricesForItem(it.item);
-          dbRows.push(...rows);
-        }
-      } catch (e) {
-        console.warn("Extract prices from video failed", e);
-      }
+      Speech.stop();
+      speechQueueRef.current = [];
+      isSpeakingRef.current = false;
+      pendingSpeechBufferRef.current = "";
+      setStatus("Answering…");
 
-      const answerText = await askRealtimeWithImageAndVoice(parts, dbRows);
-      setStatus("");
-
-      if (extractedItems.length > 0) {
-        for (const it of extractedItems) {
-          const existing = await getPriceForItemAtStore(it.item, SCANNED_STORE);
-          if (!existing && it.item && Number.isFinite(it.price)) {
-            try {
-              await insertPriceRow({
-                item: it.item,
-                brand: it.brand || "",
-                price: it.price,
-                weight: it.weight || "",
-                storeName: SCANNED_STORE,
-              });
-            } catch (e) {
-              console.warn("Insert scanned item failed", e);
-            }
-          }
-        }
-      }
-
-      Speech.speak(answerText, {
-        language: "en-US",
-        pitch: 1,
-        rate: 0.95,
+      const answerText = await askRealtimeWithImageAndVoiceStream(parts, (chunk, fullText) => {
+        pendingSpeechBufferRef.current += chunk;
+        flushSpeakableText(false);
+        setStatus(fullText.trim());
       });
+
+      pendingSpeechBufferRef.current += "";
+      flushSpeakableText(true);
+      setStatus(answerText);
     } catch (e) {
       Alert.alert("Error", e?.message ?? "Something went wrong.");
       setStatus("");
@@ -150,6 +170,10 @@ export default function RealtimeAskScreen({ navigation }) {
         cameraRef.current?.stopRecording();
         await recordingPromiseRef.current;
       } catch (_) {}
+      Speech.stop();
+      speechQueueRef.current = [];
+      isSpeakingRef.current = false;
+      pendingSpeechBufferRef.current = "";
       recordingPromiseRef.current = null;
       setRecording(false);
       setStatus("");

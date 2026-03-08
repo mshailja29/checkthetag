@@ -49,3 +49,58 @@ export async function askRealtimeWithImageAndVoiceApi(parts, dbRows = []) {
     const json = await fetchApi("/api/gemini/realtime-ask", { parts, dbRows });
     return json.answer;
 }
+
+export async function askRealtimeWithImageAndVoiceStreamApi(parts, onChunk, dbRows = []) {
+    const res = await fetch(`${API_BASE_URL}/api/gemini/realtime-ask-stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parts, dbRows }),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Server error (${res.status})`);
+    }
+
+    if (!res.body?.getReader) {
+        return askRealtimeWithImageAndVoiceApi(parts, dbRows);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullText = "";
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+            if (!line.trim()) continue;
+            const json = JSON.parse(line);
+            if (json.error) throw new Error(json.error);
+            if (json.text) {
+                fullText += json.text;
+                if (onChunk) onChunk(json.text, fullText);
+            }
+            if (json.done) {
+                return fullText.trim() || "I couldn't generate an answer. Try again.";
+            }
+        }
+    }
+
+    if (buffer.trim()) {
+        const json = JSON.parse(buffer);
+        if (json.error) throw new Error(json.error);
+        if (json.text) {
+            fullText += json.text;
+            if (onChunk) onChunk(json.text, fullText);
+        }
+    }
+
+    return fullText.trim() || "I couldn't generate an answer. Try again.";
+}

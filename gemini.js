@@ -2,6 +2,7 @@ import {
   extractPricesFromInputApi,
   queryPricesWithAiApi,
   askRealtimeWithImageAndVoiceApi,
+  askRealtimeWithImageAndVoiceStreamApi,
 } from "./apiClient";
 
 /**
@@ -36,6 +37,15 @@ export async function askRealtimeWithImageAndVoice(parts, dbRows = []) {
     return await askRealtimeWithImageAndVoiceApi(parts, dbRows);
   } catch (error) {
     console.warn("Backend realtime API failed:", error);
+    return "I couldn't generate an answer. Try again.";
+  }
+}
+
+export async function askRealtimeWithImageAndVoiceStream(parts, onChunk, dbRows = []) {
+  try {
+    return await askRealtimeWithImageAndVoiceStreamApi(parts, onChunk, dbRows);
+  } catch (error) {
+    console.warn("Backend realtime stream API failed:", error);
     return "I couldn't generate an answer. Try again.";
   }
 }
