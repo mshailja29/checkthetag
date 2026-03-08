@@ -1,6 +1,6 @@
 const { VertexAI } = require("@google-cloud/vertexai");
 
-const PROJECT_ID = process.env.GCP_PROJECT_ID || "gcloud-hackathon-me2chuk6yxck5";
+const PROJECT_ID = process.env.GCP_PROJECT_ID || "gcloud-hackathon-vi0ysib4ateve";
 const REGION = process.env.GCP_REGION || "us-central1";
 const MODEL = "gemini-2.5-flash";
 

@@ -33,6 +33,15 @@ async function fetchApi(endpoint, body, options = {}) {
   return parseApiResponse(res);
 }
 
+async function fetchGet(endpoint) {
+  const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+    headers: buildHeaders(),
+  });
+  return parseApiResponse(res);
+}
+
+// AUTH ENDPOINTS
+
 export async function signupApi({ name, email, password }) {
   const json = await fetchApi("/api/auth/signup", { name, email, password });
   return json;
@@ -48,38 +57,29 @@ export async function getCurrentUserApi() {
   return json;
 }
 
-/**
- * Extract structured receipt data from a base64-encoded image.
- * @param {string} base64Image - Base64 image data (no data: prefix)
- * @param {string} mimeType - e.g. "image/jpeg"
- * @returns {Promise<Object>} { storeName, storeAddress, date, items, subtotal, tax, total, paymentMethod }
- */
+// AI ENDPOINTS
+
 export async function extractReceipt(base64Image, mimeType = "image/jpeg") {
   const json = await fetchApi("/api/extract-receipt", { image: base64Image, mimeType });
   return json.data;
 }
 
-/**
- * Build Gemini parts from multimodal input and extract prices (legacy scan logic).
- */
-export async function extractPricesFromInputApi(parts, storeName) {
-  const json = await fetchApi("/api/gemini/extract-prices", { parts, storeName });
+export async function extractPricesFromInputApi(parts, storeName, { userId, storeId, saveToCloud } = {}) {
+  const json = await fetchApi("/api/gemini/extract-prices", {
+    parts, storeName, userId, storeId, saveToCloud,
+  });
   return json.data;
 }
 
-/**
- * Ask AI a question about the given price data.
- */
 export async function queryPricesWithAiApi(question, dbRows) {
   const json = await fetchApi("/api/gemini/query-prices", { question, dbRows });
   return json.answer;
 }
 
-/**
- * Realtime Q&A: image + optional audio. Returns answer text for TTS.
- */
-export async function askRealtimeWithImageAndVoiceApi(parts, dbRows = []) {
-  const json = await fetchApi("/api/gemini/realtime-ask", { parts, dbRows });
+export async function askRealtimeWithImageAndVoiceApi(parts, dbRows = [], { latitude, longitude, radius } = {}) {
+  const json = await fetchApi("/api/gemini/realtime-ask", {
+    parts, dbRows, latitude, longitude, radius,
+  });
   return json.answer;
 }
 
@@ -136,4 +136,85 @@ export async function askRealtimeWithImageAndVoiceStreamApi(parts, onChunk, dbRo
   }
 
   return fullText.trim() || "I couldn't generate an answer. Try again.";
+}
+
+// CLOUD ENDPOINTS - Users
+
+export async function createUser({ name, email, latitude, longitude, address }) {
+  const json = await fetchApi("/api/users", { name, email, latitude, longitude, address });
+  return json.userId;
+}
+
+export async function getUser(userId) {
+  const json = await fetchGet(`/api/users/${userId}`);
+  return json.data;
+}
+
+export async function updateUserLocation(userId, { latitude, longitude, address }) {
+  await fetchApi(`/api/users/${userId}/location`, { latitude, longitude, address }, { method: "PUT" });
+}
+
+// CLOUD ENDPOINTS - Stores
+
+export async function createStore({ name, chain, address, latitude, longitude, city, state, zip, storeType }) {
+  const json = await fetchApi("/api/stores", { name, chain, address, latitude, longitude, city, state, zip, storeType });
+  return json.storeId;
+}
+
+export async function getStoresNearby(latitude, longitude, radius = 3) {
+  const json = await fetchGet(`/api/stores/nearby?lat=${latitude}&lng=${longitude}&radius=${radius}`);
+  return json.data;
+}
+
+export async function getAllStores() {
+  const json = await fetchGet("/api/stores");
+  return json.data;
+}
+
+export async function searchStore(name) {
+  const json = await fetchGet(`/api/stores/search?name=${encodeURIComponent(name)}`);
+  return json.data;
+}
+
+// CLOUD ENDPOINTS - Prices
+
+export async function savePricesBatch({ items, storeName, storeId, storeLatitude, storeLongitude, userId, scanSource, scanId }) {
+  const json = await fetchApi("/api/prices/batch", {
+    items, storeName, storeId, storeLatitude, storeLongitude, userId, scanSource, scanId,
+  });
+  return json;
+}
+
+export async function searchCloudPrices(query) {
+  const json = await fetchGet(`/api/prices/search?q=${encodeURIComponent(query || "")}`);
+  return json.data;
+}
+
+export async function getPricesForProduct(productName) {
+  const json = await fetchGet(`/api/prices/product/${encodeURIComponent(productName)}`);
+  return json.data;
+}
+
+export async function getPricesNearby(product, latitude, longitude, radius = 3) {
+  const json = await fetchGet(`/api/prices/nearby?product=${encodeURIComponent(product)}&lat=${latitude}&lng=${longitude}&radius=${radius}`);
+  return json.data;
+}
+
+export async function comparePrices(product, latitude, longitude, radius = 3) {
+  const json = await fetchGet(`/api/prices/compare?product=${encodeURIComponent(product)}&lat=${latitude}&lng=${longitude}&radius=${radius}`);
+  return json.data;
+}
+
+// CLOUD ENDPOINTS - Scans
+
+export async function saveScan({ userId, image, mimeType, scanType, storeName, storeId, latitude, longitude, extractedData }) {
+  const json = await fetchApi("/api/scans", {
+    userId, image, mimeType, scanType, storeName, storeId, latitude, longitude, extractedData,
+  });
+  return json;
+}
+
+export async function getUserScans(userId) {
+  const json = await fetchGet(`/api/scans/user/${userId}`);
+  return json.data;
 }

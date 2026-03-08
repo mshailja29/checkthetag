@@ -1,15 +1,18 @@
 const express = require("express");
 const { VertexAI } = require("@google-cloud/vertexai");
 
+const firestore = require("../services/firestore");
+
+
 const router = express.Router();
 
-const PROJECT_ID = process.env.GCP_PROJECT_ID || "gcloud-hackathon-me2chuk6yxck5";
+const PROJECT_ID = process.env.GCP_PROJECT_ID || "gcloud-hackathon-vi0ysib4ateve";
 const REGION = process.env.GCP_REGION || "us-central1";
-const MODEL = "gemini-2.5-flash"; // Valid Vertex AI model version
+const MODEL = "gemini-2.5-flash";
 
 const vertexAI = new VertexAI({ project: PROJECT_ID, location: REGION });
 
-/* --- Helper functions from original gemini.js --- */
+/* --- Helper functions --- */
 const EXTRACT_PROMPT =
     'From this input (image, video, audio, or text), identify grocery items and their prices. If the input is a VIDEO, analyze the ENTIRE video - watch all frames from start to end and extract items shown at any point. Do NOT use only a single frame. Output ONLY a JSON array of objects: [{"item": "string", "brand": "string", "price": number, "weight": "string"}]. If you cannot find any items, return [].';
 
@@ -65,9 +68,6 @@ function extractResponseText(responseLike) {
     return parts.map((part) => part?.text || "").join("");
 }
 
-/**
- * Convert frontend parts to VertexAI parts format
- */
 function buildVertexParts(parts) {
     const vertexParts = [];
     for (const p of parts) {
@@ -93,7 +93,7 @@ function buildVertexParts(parts) {
 // POST /api/gemini/extract-prices
 router.post("/extract-prices", async (req, res) => {
     try {
-        const { parts, storeName } = req.body;
+        const { parts, storeName, userId, storeId, latitude, longitude, saveToCloud } = req.body;
         if (!Array.isArray(parts)) return res.status(400).json({ error: "parts must be an array" });
 
         const model = vertexAI.getGenerativeModel({ model: MODEL });
@@ -108,7 +108,33 @@ router.post("/extract-prices", async (req, res) => {
         const rawJson = stripToJsonArray(text);
         const cleaned = coerceAiItems(rawJson);
 
-        res.json({ success: true, data: cleaned });
+        // Save to Firestore if requested
+        let savedCount = 0;
+        if (saveToCloud && cleaned.length > 0) {
+            try {
+                let storeLatitude = null, storeLongitude = null;
+                let resolvedStoreId = storeId || "";
+                if (resolvedStoreId) {
+                    const store = await firestore.getStore(resolvedStoreId);
+                    if (store) { storeLatitude = store.latitude; storeLongitude = store.longitude; }
+                }
+                const priceIds = await firestore.saveExtractedItems({
+                    items: cleaned,
+                    storeName: storeName || "Unknown Store",
+                    storeId: resolvedStoreId,
+                    storeLatitude,
+                    storeLongitude,
+                    userId: userId || "anonymous",
+                    scanSource: "manual",
+                });
+                savedCount = priceIds.length;
+                console.log(`[extract-prices] Saved ${savedCount} prices to Firestore`);
+            } catch (saveErr) {
+                console.warn("[extract-prices] Firestore save failed:", saveErr.message);
+            }
+        }
+
+        res.json({ success: true, data: cleaned, savedToCloud: savedCount });
     } catch (err) {
         console.error("[extract-prices]", err);
         res.status(500).json({ error: err.message });
@@ -145,10 +171,49 @@ Answer concisely and helpfully. If the data is empty, say so. Format lists clear
 // POST /api/gemini/realtime-ask
 router.post("/realtime-ask", async (req, res) => {
     try {
-        const { parts, dbRows } = req.body;
+        const { parts, dbRows, latitude, longitude, radius } = req.body;
         if (!Array.isArray(parts)) return res.status(400).json({ error: "parts must be an array" });
 
-        const prompt = buildRealtimePrompt(dbRows);
+        // Combine local dbRows with Firestore data if location is provided
+        let allPriceData = dbRows || [];
+
+        if (latitude && longitude) {
+            try {
+                // First extract items from the video/image to know what to search for
+                const extractModel = vertexAI.getGenerativeModel({ model: MODEL });
+                const extractParts = [{ text: EXTRACT_PROMPT }, ...buildVertexParts(parts)];
+                const extractResult = await extractModel.generateContent({
+                    contents: [{ role: "user", parts: extractParts }],
+                    generationConfig: { temperature: 0.1 },
+                });
+                const extractText = extractResult?.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+                const extractedItems = coerceAiItems(stripToJsonArray(extractText));
+
+                // Search Firestore for each extracted item nearby
+                for (const item of extractedItems) {
+                    const nearbyPrices = await firestore.findPricesNearby(
+                        item.item, latitude, longitude, radius || 3
+                    );
+                    for (const np of nearbyPrices) {
+                        allPriceData.push({
+                            item: np.displayProductName || np.productName,
+                            brand: np.brand || "",
+                            price: np.price,
+                            weight: np.weight || "",
+                            storeName: np.storeName || "",
+                            distance: np.distance ? `${np.distance} mi` : "",
+                        });
+                    }
+                }
+                console.log(`[realtime-ask] Found ${allPriceData.length} price entries (${(dbRows || []).length} local + ${allPriceData.length - (dbRows || []).length} Firestore)`);
+            } catch (fsErr) {
+                console.warn("[realtime-ask] Firestore lookup failed, using local data only:", fsErr.message);
+            }
+        }
+
+        const prompt = allPriceData.length > 0
+            ? `${REALTIME_SYSTEM_PROMPT}\n\nDatabase of known prices for this or similar items (use only if user asks about price or cheaper store):\n${JSON.stringify(allPriceData)}`
+            : buildRealtimePrompt([]);
 
         const geminiParts = [{ text: prompt }, ...buildVertexParts(parts)];
         const model = vertexAI.getGenerativeModel({ model: MODEL });

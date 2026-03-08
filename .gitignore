@@ -28,6 +28,11 @@ yarn-error.*
 .env.local
 .env.*.local
 
+# Service account keys (NEVER commit these)
+service-account*.json
+gcloud-hackathon*.json
+*-credentials.json
+
 # OS
 .DS_Store
 Thumbs.db
